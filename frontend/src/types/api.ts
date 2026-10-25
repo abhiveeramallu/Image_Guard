@@ -159,7 +159,7 @@ export interface Capabilities {
 
 export interface AnalyzeSettings extends DetectionSettings {
   splicing_threshold: number
-  localization_threshold: number
+  localization_threshold?: number
 }
 
 // ---- invisible watermark -----------------------------------------------------------------
@@ -187,86 +187,5 @@ export interface InvisibleVerifyResult {
   processing_ms: number
   warnings: string[]
   limitations: string[]
-}
-
-// ---- Attack Lab -------------------------------------------------------------
-export interface ExperimentImageInfo {
-  width: number
-  height: number
-  format: string
-  size_bytes?: number | null
-}
-
-export interface BaselineInfo {
-  width: number
-  height: number
-  format: string
-  has_visible_watermark: boolean
-  visible_watermark_text?: string | null
-  has_invisible_watermark: boolean
-  invisible_owner?: string | null
-}
-
-export interface TransformationStep {
-  step: number
-  transformation: string
-  params: Record<string, unknown>
-  description: string
-  timestamp: string
-  output_size: [number, number]
-}
-
-export interface GroundTruthInfo {
-  has_mask: boolean
-  transformation?: string | null
-  regions: Record<string, unknown>[]
-  mask_artifact?: string | null
-  notes?: string | null
-}
-
-export interface EvaluationMetrics {
-  tp: number
-  fp: number
-  tn: number
-  fn: number
-  precision: number | null
-  recall: number | null
-  f1: number | null
-  iou: number | null
-  semantics_note: string
-}
-
-export interface MethodEvaluation {
-  method: string
-  metrics: EvaluationMetrics | null
-  notes: string
-}
-
-export interface ExperimentAnalysisResult {
-  experiment_id: string
-  image: ExperimentImageInfo
-  baseline: BaselineInfo
-  history: TransformationStep[]
-  ground_truth: GroundTruthInfo
-  detection_results: Record<string, any>[]
-  watermark_verification: {
-    status: string
-    status_reason: string
-    owner?: string | null
-    integrity_verified?: boolean
-    [key: string]: any
-  } | null
-  evaluation: MethodEvaluation[]
-  answers: {
-    question_a: string
-    question_b: string
-    question_c: string
-  }
-  artifacts: Record<string, string>
-  report_json: string
-  report_html: string
-  processing_ms: number
-  warnings: string[]
-  disclaimer: string
 }
 

@@ -181,3 +181,109 @@ def test_forgery_lab_watermark_failure_distinct_from_forgery(client, sample_imag
     # Verify disclaimer reinforces that watermark failure does not prove forgery
     assert "not proof of authenticity or tampering" in j["disclaimer"].lower() or "indicator" in j["disclaimer"].lower()
 
+
+def test_forgery_lab_non_square_landscape_1870x950(client):
+    """Regression test: User-reported 1870 x 950 px image with matching ground-truth mask."""
+    # Create 1870 x 950 image (width 1870, height 950, numpy shape is (950, 1870, 3))
+    w, h = 1870, 950
+    img = np.full((h, w, 3), 128, dtype=np.uint8)
+    # Add a painted modification
+    mod_img = img.copy()
+    cv2.rectangle(mod_img, (200, 200), (400, 350), (255, 0, 0), -1)
+
+    gt_mask = np.zeros((h, w), dtype=np.uint8)
+    gt_mask[200:350, 200:400] = 255
+
+    mod_bytes = to_bytes(mod_img, "PNG")
+    gt_bytes = to_bytes(gt_mask, "PNG")
+
+    r = client.post(
+        "/api/forgery-lab/analyze",
+        files={
+            "file": ("modified_1870x950.png", mod_bytes, "image/png"),
+            "ground_truth_file": ("gt_1870x950.png", gt_bytes, "image/png"),
+        },
+        data={"methods": "copy_move,splicing"},
+    )
+    assert r.status_code == 200
+    j = r.json()
+    assert j["image"]["width"] == 1870
+    assert j["image"]["height"] == 950
+    assert j["ground_truth"]["has_mask"] is True
+    assert j["ground_truth"]["regions"][0]["pixel_count"] == 200 * 150
+
+
+def test_forgery_lab_transposed_mask_orientation(client):
+    """Transposed ground-truth mask (e.g. height and width swapped) is auto-aligned."""
+    w, h = 1870, 950
+    img = np.full((h, w, 3), 128, dtype=np.uint8)
+    mod_img = img.copy()
+    cv2.rectangle(mod_img, (100, 100), (300, 200), (0, 255, 0), -1)
+
+    # Transposed mask: shape (1870, 950) instead of (950, 1870)
+    transposed_gt = np.zeros((w, h), dtype=np.uint8)
+    transposed_gt[100:300, 100:200] = 255
+
+    mod_bytes = to_bytes(mod_img, "PNG")
+    gt_bytes = to_bytes(transposed_gt, "PNG")
+
+    r = client.post(
+        "/api/forgery-lab/analyze",
+        files={
+            "file": ("modified.png", mod_bytes, "image/png"),
+            "ground_truth_file": ("transposed_gt.png", gt_bytes, "image/png"),
+        },
+        data={"methods": "splicing"},
+    )
+    assert r.status_code == 200
+    j = r.json()
+    assert j["image"]["width"] == 1870
+    assert j["image"]["height"] == 950
+    assert j["ground_truth"]["has_mask"] is True
+
+
+def test_forgery_lab_aspect_ratio_scaled_mask(client):
+    """Ground-truth mask with same aspect ratio but different scale is resized using nearest neighbor."""
+    w, h = 1870, 950
+    img = np.full((h, w, 3), 128, dtype=np.uint8)
+    # Mask scaled to half resolution: 935 x 475
+    scaled_gt = np.zeros((475, 935), dtype=np.uint8)
+    scaled_gt[50:100, 100:200] = 255
+
+    mod_bytes = to_bytes(img, "PNG")
+    gt_bytes = to_bytes(scaled_gt, "PNG")
+
+    r = client.post(
+        "/api/forgery-lab/analyze",
+        files={
+            "file": ("mod.png", mod_bytes, "image/png"),
+            "ground_truth_file": ("scaled_gt.png", gt_bytes, "image/png"),
+        },
+        data={"methods": "splicing"},
+    )
+    assert r.status_code == 200
+    j = r.json()
+    assert j["image"]["width"] == 1870
+    assert j["image"]["height"] == 950
+    assert j["ground_truth"]["has_mask"] is True
+
+
+def test_forgery_lab_portrait_image_dimensions(client):
+    """Portrait image (height > width) preserves (width, height) ordering throughout."""
+    w, h = 600, 800
+    img = np.full((h, w, 3), 100, dtype=np.uint8)
+    gt_mask = np.zeros((h, w), dtype=np.uint8)
+    gt_mask[100:200, 100:200] = 255
+
+    r = client.post(
+        "/api/forgery-lab/analyze",
+        files={
+            "file": ("portrait.png", to_bytes(img, "PNG"), "image/png"),
+            "ground_truth_file": ("portrait_gt.png", to_bytes(gt_mask, "PNG"), "image/png"),
+        },
+        data={"methods": "splicing"},
+    )
+    assert r.status_code == 200
+    j = r.json()
+    assert j["image"]["width"] == 600
+    assert j["image"]["height"] == 800

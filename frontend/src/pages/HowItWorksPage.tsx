@@ -8,11 +8,10 @@ const COPY_MOVE_STEPS = [
 ]
 
 const DISTINCTIONS = [
-  ['Copy-move detection', 'Finds regions duplicated within the same image. This is what ImageGuard implements.'],
-  ['Image splicing detection', 'Finds content pasted in from a different image. Needs other cues (noise, lighting, compression inconsistencies). Not implemented.'],
-  ['Pixel-level tampering localization', 'Labels exactly which pixels were altered, usually with a trained segmentation model. Not implemented; ImageGuard’s regions are approximate hulls.'],
-  ['Visible watermarking', 'Overlays text or a logo on the image. Implemented in Watermark Studio. It discourages reuse but can be cropped or edited out.'],
-  ['Invisible watermarking', 'Embeds a hidden signal for later extraction. Not implemented.'],
+  ['Copy-move detection', 'Finds regions duplicated within the same image using ORB feature matching and geometric clustering. Implemented in Forgery Detection.'],
+  ['Image splicing detection', 'Finds content pasted from a different image using Error Level Analysis (ELA) and noise variance discrepancies. Implemented as an experimental heuristic in Forgery Detection.'],
+  ['Visible watermarking', 'Overlays configurable text or a logo across the image with alpha compositing and optional tiling. Implemented in Watermark Studio.'],
+  ['Invisible watermarking', 'Embeds a hidden signal into transform domains (DCT-QIM) with HMAC verification for owner attribution. Implemented in Watermark Studio.'],
 ]
 
 export default function HowItWorksPage() {

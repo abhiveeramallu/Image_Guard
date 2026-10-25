@@ -93,8 +93,26 @@ def analyze_manual_forgery(
             gt_data = imgs.read_upload(ground_truth_file, settings.max_upload_bytes, "ground truth mask")
             pil_gt = Image.open(io.BytesIO(gt_data)).convert("L")
             gt_mask = np.asarray(pil_gt)
-            if gt_mask.shape != (H, W):
-                raise ApiError(400, "dimension_mismatch", f"Ground-truth mask dimensions {gt_mask.shape} do not match image dimensions {(H, W)}.")
+            mask_h, mask_w = gt_mask.shape[:2]
+            if (mask_h, mask_w) != (H, W):
+                # 1. Check if dimensions were transposed by the caller (width and height swapped)
+                if (mask_w, mask_h) == (H, W) and H != W:
+                    log.info("Ground-truth mask orientation transposed: (%d, %d) vs (%d, %d). Transposing mask to align.", mask_h, mask_w, H, W)
+                    gt_mask = cv2.transpose(gt_mask)
+                    mask_h, mask_w = gt_mask.shape[:2]
+
+                # 2. Check if aspect ratios match within 5% tolerance (e.g. mask at original resolution while image was resized, or vice-versa)
+                aspect_mask = mask_w / mask_h if mask_h > 0 else 0.0
+                aspect_img = W / H if H > 0 else 0.0
+                if abs(aspect_mask - aspect_img) < 0.05 and mask_h > 0 and mask_w > 0:
+                    log.info("Resizing ground-truth mask from (%d, %d) to (%d, %d) via nearest-neighbor interpolation.", mask_w, mask_h, W, H)
+                    gt_mask = cv2.resize(gt_mask, (W, H), interpolation=cv2.INTER_NEAREST)
+                else:
+                    raise ApiError(
+                        400,
+                        "dimension_mismatch",
+                        f"Ground-truth mask dimensions ({mask_h}, {mask_w}) do not match image dimensions ({H}, {W}).",
+                    )
             # Threshold to clean binary
             gt_mask = np.where(gt_mask > 127, 255, 0).astype(np.uint8)
             if (gt_mask > 0).sum() > 0:
@@ -144,6 +162,7 @@ def analyze_manual_forgery(
             try:
                 cm_out = cm.detect_copy_move(mod_rgb, cm_params)
                 detector_files["copy_move.annotated"] = imgs.encode_png_array(cm_out.annotated)
+                detector_files["copy_move.overlay"] = detector_files["copy_move.annotated"]
                 detector_files["copy_move.mask"] = imgs.encode_png_array(cm_out.mask)
                 detector_files["copy_move.heatmap"] = imgs.encode_png_array(cm_out.heatmap)
                 pred_masks["copy_move"] = cm_out.mask
@@ -374,15 +393,28 @@ def analyze_manual_forgery(
 
     total_ms = round((time.perf_counter() - t0) * 1000, 1)
 
+    detector_files["modified_image.png"] = detector_files["modified.png"]
+    if gt_bytes:
+        detector_files["ground_truth_mask.png"] = gt_bytes
+
     artifacts = {
         "original": f"/api/results/{analysis_id}/original.png",
         "baseline": f"/api/results/{analysis_id}/baseline.png",
         "modified": f"/api/results/{analysis_id}/modified.png",
+        "modified_image": f"/api/results/{analysis_id}/modified.png",
         "report_json": f"/api/results/{analysis_id}/experiment_report.json",
         "report_html": f"/api/results/{analysis_id}/experiment_report.html",
     }
     if gt_bytes:
         artifacts["ground_truth"] = f"/api/results/{analysis_id}/ground_truth.png"
+        artifacts["ground_truth_mask"] = f"/api/results/{analysis_id}/ground_truth.png"
+    if "copy_move.annotated" in detector_files:
+        artifacts["copy_move.overlay"] = f"/api/results/{analysis_id}/copy_move.annotated"
+        artifacts["copy_move.annotated"] = f"/api/results/{analysis_id}/copy_move.annotated"
+    if "splicing.overlay" in detector_files:
+        artifacts["splicing.overlay"] = f"/api/results/{analysis_id}/splicing.overlay"
+    if "localization.overlay" in detector_files:
+        artifacts["localization.overlay"] = f"/api/results/{analysis_id}/localization.overlay"
 
     answers_dict = {"question_a": ans_a, "question_b": ans_b, "question_c": ans_c}
 
@@ -431,7 +463,11 @@ def analyze_manual_forgery(
         image=ExperimentImageInfo(width=W, height=H, format="PNG"),
         baseline=BaselineInfo(width=W, height=H, format="PNG", has_visible_watermark=False, has_invisible_watermark=bool(wm_result and wm_result.get("status") == "verified")),
         history=[TransformationStep(step=1, transformation="manual_edits", params={}, description=f"Manual canvas edits ({tampered_pixels} px)", timestamp=datetime.now(timezone.utc).isoformat(), output_size=[W, H])] if tampered_pixels > 0 else [],
-        ground_truth=GroundTruthInfo(has_mask=bool(gt_bytes), regions=[], notes="Manual canvas ground truth."),
+        ground_truth=GroundTruthInfo(
+            has_mask=bool(gt_bytes),
+            regions=[{"type": "manual_edit", "pixel_count": tampered_pixels}] if tampered_pixels > 0 else [],
+            notes="Manual canvas ground truth.",
+        ),
         detection_results=detection_results,
         watermark_verification=wm_result,
         evaluation=eval_list,

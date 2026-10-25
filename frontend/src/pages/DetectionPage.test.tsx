@@ -139,12 +139,12 @@ describe('DetectionPage', () => {
 describe('DetectionPage: multi-method analysis', () => {
   const pick = async (label: RegExp) => { await userEvent.click(await screen.findByRole('checkbox', { name: label })) }
 
-  it('only enables available methods, marks splicing experimental, and explains why localization is unavailable', async () => {
+  it('only enables available methods, marks splicing experimental, and does not show localization', async () => {
     setup()
     await upload()
     expect(await screen.findByText('Experimental')).toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: /model-based localization/i })).toBeDisabled()
-    expect(screen.getByText(/Unavailable: No localization model is configured/)).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: /model-based localization/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Unavailable: No localization model is configured/)).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: /copy-move detection/i })).toBeChecked()
   })
 
@@ -182,18 +182,18 @@ describe('DetectionPage: multi-method analysis', () => {
 
   it('shows an explicit unavailable state (no fabricated maps) and can fall back to copy-move', async () => {
     api.getCapabilities.mockResolvedValue(capabilities({ methods: { ...capabilities().methods,
-      localization: { available: true, experimental: false, reason: null, model: null, description: '' } } }))
+      splicing: { available: true, experimental: true, reason: null, model: null, description: '' } } }))
     api.analyzeImage.mockResolvedValue(analysisResult([methodResult({
-      method: 'localization', category: 'local_manipulation', evidence_type: 'model_probability_map', status: 'unavailable',
-      status_reason: 'The model file does not exist.', experimental: false, artifacts: {}, regions: [], region_count: 0, threshold: null, threshold_semantics: null })]))
+      method: 'splicing', category: 'splicing', evidence_type: 'heuristic_forensic_map', status: 'unavailable',
+      status_reason: 'The splicing engine is unavailable.', experimental: true, artifacts: {}, regions: [], region_count: 0, threshold: null, threshold_semantics: null })]))
     api.detectCopyMove.mockResolvedValue(detectionResult())
     setup()
     await upload()
-    await pick(/model-based localization/i)
+    await pick(/splicing heuristic/i)
     await userEvent.click(screen.getByRole('button', { name: /start analysis/i }))
-    const panel = await screen.findByRole('region', { name: /Model-based localization result/ })
+    const panel = await screen.findByRole('region', { name: /Splicing heuristic result/ })
     expect(within(panel).getByText('Method unavailable')).toBeInTheDocument()
-    expect(within(panel).getByText('The model file does not exist.')).toBeInTheDocument()
+    expect(within(panel).getByText('The splicing engine is unavailable.')).toBeInTheDocument()
     expect(within(panel).queryByRole('tab')).not.toBeInTheDocument()
     expect(within(panel).queryByRole('img')).not.toBeInTheDocument()
     await userEvent.click(within(panel).getByRole('button', { name: /run copy-move detection instead/i }))
@@ -201,25 +201,23 @@ describe('DetectionPage: multi-method analysis', () => {
     expect(api.detectCopyMove).toHaveBeenCalled()
   })
 
-  it('shows model information for a localization result and re-thresholds through the backend', async () => {
-    const model = { id: 'org/m', name: 'Test model', version: '2', source: 'https://example.org/w', license: 'MIT', intended_use: 'x', output_semantics: 'probability', provider: 'CPUExecutionProvider' }
+  it('adjusts threshold through the backend when a score map is available', async () => {
     api.getCapabilities.mockResolvedValue(capabilities({ methods: { ...capabilities().methods,
-      localization: { available: true, experimental: false, reason: null, model, description: '' } } }))
+      splicing: { available: true, experimental: true, reason: null, model: null, description: '' } } }))
     api.analyzeImage.mockResolvedValue(analysisResult([methodResult({
-      method: 'localization', category: 'local_manipulation', evidence_type: 'model_probability_map', experimental: false, model,
-      method_name: 'onnx-manipulation-localization', method_version: '1.0.0', threshold: 0.5,
-      threshold_semantics: 'model-defined per-pixel manipulation probability' })]))
+      method: 'splicing', category: 'splicing', evidence_type: 'heuristic_forensic_map', experimental: true,
+      method_name: 'splicing-ela-noise', method_version: '1.0.0', threshold: 0.5,
+      artifacts: { score: '/api/results/an1/splicing.score.npy' },
+      threshold_semantics: 'normalized inconsistency score' })]))
     api.fetchThresholdLayer.mockResolvedValue({ blob: new Blob(['l']), regionCount: 3 })
     setup()
     await upload()
-    await pick(/model-based localization/i)
+    await pick(/splicing heuristic/i)
     await userEvent.click(screen.getByRole('button', { name: /start analysis/i }))
-    const panel = await screen.findByRole('region', { name: /Model-based localization result/ })
-    expect(within(panel).getByText(/Test model \(v2\)/)).toBeInTheDocument()
-    expect(within(panel).getByText('MIT')).toBeInTheDocument()
+    const panel = await screen.findByRole('region', { name: /Splicing heuristic result/ })
     await userEvent.click(within(panel).getByRole('tab', { name: 'Adjust threshold' }))
     fireEvent.change(within(panel).getByLabelText('Visualization threshold'), { target: { value: '0.8' } })
-    await waitFor(() => expect(api.fetchThresholdLayer).toHaveBeenLastCalledWith('an1', 'localization', 0.8, expect.anything()), { timeout: 2000 })
+    await waitFor(() => expect(api.fetchThresholdLayer).toHaveBeenLastCalledWith('an1', 'splicing', 0.8, expect.anything()), { timeout: 2000 })
     expect(await within(panel).findByText('3 regions at this threshold')).toBeInTheDocument()
   })
 
@@ -240,7 +238,7 @@ describe('DetectionPage: multi-method analysis', () => {
     await upload()
     await userEvent.click(await screen.findByRole('button', { name: 'All supported methods' }))
     expect(screen.getByRole('checkbox', { name: /splicing heuristic/i })).toBeChecked()
-    expect(screen.getByRole('checkbox', { name: /model-based localization/i })).not.toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: /model-based localization/i })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /start analysis/i }))
     await screen.findByRole('region', { name: /Splicing heuristic result/ })
     api.fetchArtifact.mockClear()

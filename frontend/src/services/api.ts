@@ -1,7 +1,7 @@
 import axios, { AxiosError, type AxiosProgressEvent } from 'axios'
 import type {
   AnalysisResult, AnalyzeSettings, Capabilities, DetectionResult, DetectionSettings, DetectionStatus,
-  ExperimentAnalysisResult, InvisibleEmbedResult,
+  InvisibleEmbedResult,
   InvisibleStrength, InvisibleVerifyResult, MethodId, WatermarkResult, WatermarkSettings,
 } from '../types/api'
 
@@ -166,44 +166,6 @@ export async function verifyInvisible(file: File, opts: CallOptions = {}): Promi
     const d = res.data as Partial<InvisibleVerifyResult>
     if (!d?.status) throw new ApiRequestError('The server returned an unexpected response.', 'bad_response')
     return d as InvisibleVerifyResult
-  } catch (err) {
-    throw err instanceof ApiRequestError ? err : await toApiError(err)
-  }
-}
-
-// ---- Manual Forgery Lab API ----------------------------------------------------------------
-export async function analyzeManualForgery(
-  modifiedFile: Blob | File,
-  originalFile?: Blob | File | null,
-  groundTruthFile?: Blob | File | null,
-  methods: string[] = ['copy_move', 'splicing', 'watermark_verify'],
-  settings?: {
-    splicing_threshold?: number
-    localization_threshold?: number
-    ratio?: number
-    min_matches?: number
-    min_displacement?: number
-  },
-  opts: CallOptions = {},
-): Promise<ExperimentAnalysisResult> {
-  const form = new FormData()
-  form.append('file', modifiedFile, 'modified.png')
-  if (originalFile) form.append('original_file', originalFile, 'original.png')
-  if (groundTruthFile) form.append('ground_truth_file', groundTruthFile, 'ground_truth.png')
-  form.append('methods', methods.join(','))
-  if (settings?.splicing_threshold !== undefined) form.append('splicing_threshold', String(settings.splicing_threshold))
-  if (settings?.localization_threshold !== undefined) form.append('localization_threshold', String(settings.localization_threshold))
-  if (settings?.ratio !== undefined) form.append('ratio', String(settings.ratio))
-  if (settings?.min_matches !== undefined) form.append('min_matches', String(settings.min_matches))
-  if (settings?.min_displacement !== undefined) form.append('min_displacement', String(settings.min_displacement))
-
-  try {
-    const res = await http.post('/api/forgery-lab/analyze', form, {
-      signal: opts.signal,
-      timeout: 180_000,
-      onUploadProgress: progress(opts.onProgress),
-    })
-    return res.data as ExperimentAnalysisResult
   } catch (err) {
     throw err instanceof ApiRequestError ? err : await toApiError(err)
   }

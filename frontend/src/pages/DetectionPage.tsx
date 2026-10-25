@@ -62,7 +62,7 @@ export default function DetectionPage() {
         setResult(res); setBlobs({ annotated, mask, heatmap })
       } else {
         const res = await analyzeImage(image.file, chosen,
-          { ...settings, splicing_threshold: 0.5, localization_threshold: 0.5 }, { signal: ctl.signal, onProgress })
+          { ...settings, splicing_threshold: 0.5 }, { signal: ctl.signal, onProgress })
         setPhase('fetching')
         const flat: Blobs = {}
         await Promise.all(res.results.flatMap((r) =>

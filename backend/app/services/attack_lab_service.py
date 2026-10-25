@@ -362,7 +362,25 @@ def evaluate_detection(
 
     # Harmonize shapes if slightly mismatched due to scaling
     if gt_mask.shape != pred_mask.shape:
-        pred_mask = cv2.resize(pred_mask, (gt_mask.shape[1], gt_mask.shape[0]), interpolation=cv2.INTER_NEAREST)
+        gt_h, gt_w = gt_mask.shape[:2]
+        pred_h, pred_w = pred_mask.shape[:2]
+        aspect_gt = gt_w / gt_h if gt_h > 0 else 0.0
+        aspect_pred = pred_w / pred_h if pred_h > 0 else 0.0
+        if abs(aspect_gt - aspect_pred) < 0.05 and pred_w > 0 and pred_h > 0:
+            pred_mask = cv2.resize(pred_mask, (gt_w, gt_h), interpolation=cv2.INTER_NEAREST)
+        else:
+            log.warning("Cannot evaluate %s: ground truth shape %s does not match prediction shape %s", method_name, gt_mask.shape, pred_mask.shape)
+            return {
+                "tp": 0,
+                "fp": 0,
+                "tn": 0,
+                "fn": 0,
+                "precision": None,
+                "recall": None,
+                "f1": None,
+                "iou": None,
+                "semantics_note": f"Dimension mismatch: Ground-truth ({gt_w}x{gt_h}) and detector ({pred_w}x{pred_h}) dimensions do not match.",
+            }
 
     counts = pixel_counts(pred_mask, gt_mask)
     metrics_prf = prf(counts)

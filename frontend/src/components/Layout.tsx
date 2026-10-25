@@ -1,12 +1,11 @@
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { BookOpen, FlaskConical, LayoutDashboard, Menu, ScanSearch, ShieldCheck, Stamp, X } from 'lucide-react'
+import { BookOpen, LayoutDashboard, Menu, ScanSearch, ShieldCheck, Stamp, X } from 'lucide-react'
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/detect', label: 'Forgery Detection', icon: ScanSearch },
   { to: '/watermark', label: 'Watermark Studio', icon: Stamp },
-  { to: '/forgery-lab', label: 'Manual Forgery Lab', icon: FlaskConical },
   { to: '/how-it-works', label: 'How It Works', icon: BookOpen },
 ]
 

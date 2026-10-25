@@ -1,25 +1,26 @@
 import { FlaskConical } from 'lucide-react'
 import type { Capabilities, MethodId } from '../types/api'
 
-const META: Record<MethodId, { label: string; blurb: string; experimental?: boolean }> = {
+type AvailableMethodId = 'copy_move' | 'splicing'
+
+const META: Record<AvailableMethodId, { label: string; blurb: string; experimental?: boolean }> = {
   copy_move: { label: 'Copy-move detection', blurb: 'ORB feature matching; finds regions duplicated within the image.' },
   splicing: { label: 'Splicing heuristic', blurb: 'Noise / error-level inconsistencies. Not a trained or validated detector.', experimental: true },
-  localization: { label: 'Model-based localization', blurb: 'Pixel-level manipulation probability map from a configured ONNX model.' },
 }
-const ORDER: MethodId[] = ['copy_move', 'splicing', 'localization']
+const ORDER: AvailableMethodId[] = ['copy_move', 'splicing']
 
 export default function MethodSelector({ caps, error, loading, selected, onChange, disabled }: {
   caps: Capabilities | null; error: string | null; loading: boolean
   selected: MethodId[]; onChange: (m: MethodId[]) => void; disabled?: boolean
 }) {
-  const state = (m: MethodId): { enabled: boolean; note: string | null } => {
+  const state = (m: AvailableMethodId): { enabled: boolean; note: string | null } => {
     if (m === 'copy_move') return { enabled: true, note: null }
     if (!caps) return { enabled: false, note: loading ? 'Checking server capabilities…' : `Unavailable: ${error ?? 'capabilities unknown'}` }
     const c = caps.methods[m]
     return { enabled: c.available, note: c.available ? null : `Unavailable: ${c.reason ?? 'not configured'}` }
   }
   const available = ORDER.filter((m) => state(m).enabled)
-  const toggle = (m: MethodId) => {
+  const toggle = (m: AvailableMethodId) => {
     const next = selected.includes(m) ? selected.filter((x) => x !== m) : [...selected, m]
     onChange(ORDER.filter((x) => next.includes(x)))
   }
@@ -34,7 +35,7 @@ export default function MethodSelector({ caps, error, loading, selected, onChang
           {all ? 'Copy-move only' : 'All supported methods'}
         </button>
       </div>
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-2 md:grid-cols-2">
         {ORDER.map((m) => {
           const { enabled, note } = state(m)
           const id = `method-${m}`
@@ -54,9 +55,6 @@ export default function MethodSelector({ caps, error, loading, selected, onChang
                 </span>
                 <span className="mt-0.5 block text-xs text-slate-600">{META[m].blurb}</span>
                 {note && <span className="mt-1 block text-xs font-medium text-amber-700">{note}</span>}
-                {m === 'localization' && caps?.methods.localization.model && (
-                  <span className="mt-1 block text-xs text-slate-500">Model: {caps.methods.localization.model.name} v{caps.methods.localization.model.version}</span>
-                )}
               </span>
             </label>
           )

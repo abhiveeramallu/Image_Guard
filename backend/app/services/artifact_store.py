@@ -21,7 +21,9 @@ ATTACK_LAB_ARTIFACTS = {
     "baseline.jpg": ("image/jpeg", "jpg"),
     "modified.png": ("image/png", "png"),
     "modified.jpg": ("image/jpeg", "jpg"),
+    "modified_image.png": ("image/png", "png"),
     "ground_truth.png": ("image/png", "png"),
+    "ground_truth_mask.png": ("image/png", "png"),
     "experiment_report.json": ("application/json", "json"),
     "experiment_report.html": ("text/html; charset=utf-8", "html"),
 }
