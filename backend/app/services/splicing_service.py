@@ -66,10 +66,11 @@ def detect_splicing(rgb: np.ndarray, is_jpeg: bool, params: SplicingParams | Non
     warnings: list[str] = []
     settings = asdict(p)
 
-    def done(status, reason, score=None, mask=None, regions=None, metrics=None):
+    def done(status, reason, score=None, mask=None, regions=None, metrics=None, ela_image=None, ela_score=None, noise_score=None):
         return MapOutput(status=status, status_reason=reason, score=score, threshold=p.threshold,
                          regions=regions or [], metrics={**(metrics or {}), "settings": settings}, warnings=warnings,
-                         processing_ms=round((time.perf_counter() - t0) * 1000, 1), mask=mask)
+                         processing_ms=round((time.perf_counter() - t0) * 1000, 1), mask=mask,
+                         ela_image=ela_image, ela_score=ela_score, noise_score=noise_score)
 
     if min(H, W) < p.min_side:
         return done("inconclusive", f"Image is smaller than {p.min_side}px on one side; local statistics are unreliable.")
@@ -87,17 +88,21 @@ def detect_splicing(rgb: np.ndarray, is_jpeg: bool, params: SplicingParams | Non
     score = score_noise
     metrics: dict = {"window_px": win, "noise_z_p99": round(float(np.percentile(z_noise, 99)), 2)}
 
+    ela_image = None
+    ela_score = None
     if is_jpeg:
         ok, enc = cv2.imencode(".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, p.ela_quality])
         if ok:
             re = cv2.cvtColor(cv2.imdecode(enc, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
-            ela = np.abs(rgb.astype(np.float32) - re.astype(np.float32)).mean(axis=2)
-            ela_local = cv2.boxFilter(ela, -1, (win, win), borderType=cv2.BORDER_REFLECT)
+            ela_diff = np.abs(rgb.astype(np.float32) - re.astype(np.float32))
+            ela_local = cv2.boxFilter(ela_diff.mean(axis=2), -1, (win, win), borderType=cv2.BORDER_REFLECT)
             z_ela = _robust_z(np.log(ela_local + 0.05), p.mad_floor)
             score_ela = _to_score(z_ela, p.ela_z_low, p.ela_z_high)
             score = np.maximum(score, score_ela)
             components.append("error_level_analysis")
             metrics["ela_z_p99"] = round(float(np.percentile(z_ela, 99)), 2)
+            ela_image = np.clip(ela_diff * 12.0, 0, 255).astype(np.uint8)
+            ela_score = score_ela
     else:
         warnings.append("Input is not a JPEG, so error-level analysis was skipped.")
 
@@ -111,9 +116,10 @@ def detect_splicing(rgb: np.ndarray, is_jpeg: bool, params: SplicingParams | Non
 
     if frac > p.max_area_fraction:
         return done("inconclusive", f"{frac:.0%} of the image was flagged, which suggests global inhomogeneity rather than a local splice.",
-                    score, mask, regions, metrics)
+                    score, mask, regions, metrics, ela_image=ela_image, ela_score=ela_score, noise_score=score_noise)
     if regions:
         return done("candidate_regions_found",
                     f"{len(regions)} region(s) have noise/compression statistics that differ strongly from the rest of the image. Heuristic only; review visually.",
-                    score, mask, regions, metrics)
-    return done("no_candidate_regions_found", "No region exceeded the heuristic threshold.", score, np.zeros((H, W), np.uint8), [], metrics)
+                    score, mask, regions, metrics, ela_image=ela_image, ela_score=ela_score, noise_score=score_noise)
+    return done("no_candidate_regions_found", "No region exceeded the heuristic threshold.", score, np.zeros((H, W), np.uint8), [], metrics,
+                ela_image=ela_image, ela_score=ela_score, noise_score=score_noise)

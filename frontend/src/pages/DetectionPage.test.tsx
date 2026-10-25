@@ -258,4 +258,78 @@ describe('DetectionPage: multi-method analysis', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await screen.findByRole('region', { name: /Splicing heuristic result/ })).toBeInTheDocument()
   })
+
+  it('switches to cross-image splicing test mode and displays background and donor dropzones', async () => {
+    setup()
+    await userEvent.click(screen.getByRole('tab', { name: 'Cross-Image Splicing Test' }))
+    expect(screen.getByText(/1\. Background Image \(Base\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/2\. Donor Image \(Source of Patch\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/Test how the splicing heuristic/i)).toBeInTheDocument()
+  })
+
+  it('renders ELA and noise diagnostic tabs with descriptive legends', async () => {
+    api.analyzeImage.mockResolvedValue(
+      analysisResult([
+        methodResult({
+          method: 'splicing',
+          artifacts: {
+            overlay: '/o',
+            noise: '/noise',
+            ela: '/ela',
+            heatmap: '/h',
+            mask: '/m',
+          },
+        }),
+      ]),
+    )
+    setup()
+    await upload()
+    await pick(/splicing heuristic/i)
+    await userEvent.click(screen.getByRole('button', { name: /start analysis/i }))
+    const panel = await screen.findByRole('region', { name: /Splicing heuristic result/ })
+
+    // Noise residual tab & legend
+    await userEvent.click(within(panel).getByRole('tab', { name: 'Noise-residual map' }))
+    expect(within(panel).getByText('High-Pass / Wavelet Noise Residual Diagnostic Map')).toBeInTheDocument()
+    expect(within(panel).getByText(/Raw heuristic diagnostic cue, NOT an AI manipulation probability map/i)).toBeInTheDocument()
+
+    // ELA tab & legend
+    await userEvent.click(within(panel).getByRole('tab', { name: 'Error Level Analysis (ELA)' }))
+    expect(within(panel).getByText('Error Level Analysis (ELA) Diagnostic Map')).toBeInTheDocument()
+  })
+
+  it('renders ground-truth evaluation metrics when evaluation data is returned', async () => {
+    api.analyzeImage.mockResolvedValue(
+      analysisResult([
+        methodResult({
+          method: 'splicing',
+          evaluation: {
+            tp: 1000,
+            fp: 50,
+            tn: 40000,
+            fn: 200,
+            precision: 0.9524,
+            recall: 0.8333,
+            f1: 0.8889,
+            iou: 0.8,
+            gt_pixels: 1200,
+            pred_pixels: 1050,
+            semantics_note: 'Controlled post-detection evaluation note.',
+          },
+        }),
+      ]),
+    )
+    setup()
+    await upload()
+    await pick(/splicing heuristic/i)
+    await userEvent.click(screen.getByRole('button', { name: /start analysis/i }))
+    const panel = await screen.findByRole('region', { name: /Splicing heuristic result/ })
+
+    expect(within(panel).getByText('Ground-Truth Evaluation (Controlled Splicing Test)')).toBeInTheDocument()
+    expect(within(panel).getByText('Controlled post-detection evaluation note.')).toBeInTheDocument()
+    expect(within(panel).getByText('83.3%')).toBeInTheDocument() // Recall
+    expect(within(panel).getByText('95.2%')).toBeInTheDocument() // Precision
+    expect(within(panel).getByText('0.889')).toBeInTheDocument() // F1
+    expect(within(panel).getByText('0.800')).toBeInTheDocument() // IoU
+  })
 })

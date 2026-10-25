@@ -100,6 +100,20 @@ export type MethodId = 'copy_move' | 'splicing' | 'localization'
 export type MethodStatus =
   | 'candidate_regions_found' | 'no_candidate_regions_found' | 'inconclusive' | 'unavailable' | 'failed'
 
+export interface EvaluationMetrics {
+  tp: number
+  fp: number
+  tn: number
+  fn: number
+  precision: number | null
+  recall: number | null
+  f1: number | null
+  iou: number | null
+  gt_pixels: number
+  pred_pixels: number
+  semantics_note: string | null
+}
+
 export interface MethodResult {
   method: MethodId
   category: 'copy_move' | 'splicing' | 'local_manipulation'
@@ -115,6 +129,7 @@ export interface MethodResult {
   region_count: number
   regions: Record<string, unknown>[]
   metrics: Record<string, unknown>
+  evaluation?: EvaluationMetrics | null
   processing_ms: number
   artifacts: Record<string, string>
   warnings: string[]
@@ -140,6 +155,7 @@ export interface AnalysisResult {
   artifact_ttl_seconds: number
   report_json: string
   disclaimer: string
+  ground_truth?: string | null
 }
 
 export interface MethodCapability {

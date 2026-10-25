@@ -112,9 +112,11 @@ export async function getCapabilities(signal?: AbortSignal): Promise<Capabilitie
 
 export async function analyzeImage(
   file: File, methods: MethodId[], settings: AnalyzeSettings, opts: CallOptions = {},
+  groundTruthFile?: File | null,
 ): Promise<AnalysisResult> {
   const form = new FormData()
   form.append('file', file)
+  if (groundTruthFile) form.append('ground_truth_file', groundTruthFile)
   form.append('methods', methods.join(','))
   Object.entries(settings).forEach(([k, v]) => form.append(k, String(v)))
   try {

@@ -19,6 +19,30 @@ class MapOutput:
     warnings: list[str] = field(default_factory=list)
     processing_ms: float = 0.0
     mask: np.ndarray | None = None  # uint8 0/255
+    ela_image: np.ndarray | None = None  # RGB visual of ELA difference (e.g. amplified)
+    ela_score: np.ndarray | None = None  # float32 HxW in [0, 1]
+    noise_score: np.ndarray | None = None  # float32 HxW in [0, 1]
+
+
+def pixel_counts(pred: np.ndarray, gt: np.ndarray) -> dict[str, int]:
+    """Compute TP, FP, TN, FN pixel counts between binary prediction and ground truth masks."""
+    p, g = pred > 0, gt > 0
+    return {
+        "tp": int((p & g).sum()),
+        "fp": int((p & ~g).sum()),
+        "tn": int((~p & ~g).sum()),
+        "fn": int((~p & g).sum()),
+    }
+
+
+def prf(c: dict[str, int]) -> dict[str, float | None]:
+    """Compute Precision, Recall, F1, and IoU from pixel count dict."""
+    tp, fp, fn = c["tp"], c["fp"], c["fn"]
+    precision = tp / (tp + fp) if (tp + fp) else None
+    recall = tp / (tp + fn) if (tp + fn) else None
+    f1 = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn and tp + fn > 0) else None
+    iou = tp / (tp + fp + fn) if (tp + fp + fn and tp + fn > 0) else None
+    return {"precision": precision, "recall": recall, "f1": f1, "iou": iou}
 
 
 def threshold_mask(score: np.ndarray, threshold: float, min_area: int, close_px: int = 5) -> tuple[np.ndarray, list[dict]]:

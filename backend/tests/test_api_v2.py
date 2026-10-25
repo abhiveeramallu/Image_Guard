@@ -213,3 +213,81 @@ def test_cors_exposes_headers_the_frontend_reads(client):
     r = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
     exposed = r.headers["access-control-expose-headers"]
     assert "X-Region-Count" in exposed and "Content-Disposition" in exposed
+
+
+def test_splicing_diagnostic_artifacts_jpeg_and_png(client):
+    # JPEG upload produces both ELA and noise diagnostic artifacts
+    f, _ = splice(photo_like(seed=310), donor_seed=17)
+    jpeg_bytes = to_bytes(f, "JPEG")
+    res_jpeg = client.post("/api/detect/analyze", files={"file": ("s.jpg", jpeg_bytes, "image/jpeg")},
+                           data={"methods": "splicing"}).json()
+    r_jpeg = res_jpeg["results"][0]
+    assert "ela" in r_jpeg["artifacts"]
+    assert "noise" in r_jpeg["artifacts"]
+    ela_bytes = client.get(r_jpeg["artifacts"]["ela"]).content
+    noise_bytes = client.get(r_jpeg["artifacts"]["noise"]).content
+    assert decode(ela_bytes).size == (640, 480)
+    assert decode(noise_bytes).size == (640, 480)
+
+    # PNG upload produces noise diagnostic artifact, skipping ELA
+    res_png = client.post("/api/detect/analyze", files={"file": ("s.png", to_bytes(f, "PNG"), "image/png")},
+                          data={"methods": "splicing"}).json()
+    r_png = res_png["results"][0]
+    assert "noise" in r_png["artifacts"]
+    assert "ela" not in r_png["artifacts"]
+
+
+def test_splicing_with_ground_truth_evaluation(client):
+    f, gt = splice(photo_like(seed=310), donor_seed=17)
+    gt_bytes = to_bytes(gt, "PNG")
+    res = client.post(
+        "/api/detect/analyze",
+        files={
+            "file": ("composite.png", to_bytes(f, "PNG"), "image/png"),
+            "ground_truth_file": ("gt.png", gt_bytes, "image/png"),
+        },
+        data={"methods": "splicing"},
+    ).json()
+    assert "ground_truth" in res
+    gt_artifact = client.get(res["ground_truth"]).content
+    assert decode(gt_artifact).size == (640, 480)
+
+    r = res["results"][0]
+    assert r["evaluation"] is not None
+    ev = r["evaluation"]
+    assert ev["gt_pixels"] == int((gt > 0).sum())
+    assert ev["tp"] >= 0 and ev["fp"] >= 0
+    assert "semantics_note" in ev
+
+
+def test_splicing_ground_truth_dimension_mismatch(client):
+    f, _ = splice(photo_like(seed=310), donor_seed=17)
+    # Wrong aspect ratio mask that cannot be safely resized
+    bad_gt = np.zeros((100, 300), dtype=np.uint8)
+    res = client.post(
+        "/api/detect/analyze",
+        files={
+            "file": ("composite.png", to_bytes(f, "PNG"), "image/png"),
+            "ground_truth_file": ("bad_gt.png", to_bytes(bad_gt, "PNG"), "image/png"),
+        },
+        data={"methods": "splicing"},
+    )
+    assert res.status_code == 400
+    assert "dimension_mismatch" in res.text
+
+
+def test_splicing_controls_untouched_and_recompressed(client):
+    bg = photo_like(seed=320)
+    # 1. Untouched background
+    res_bg = client.post("/api/detect/analyze", files={"file": ("bg.png", to_bytes(bg, "PNG"), "image/png")},
+                         data={"methods": "splicing"}).json()
+    assert res_bg["results"][0]["status"] == "no_candidate_regions_found"
+
+    # 2. Spliced composite recompressed as JPEG
+    spliced, gt = splice(bg, donor_seed=25)
+    recompressed = jpeg_roundtrip(spliced, quality=85)
+    res_recomp = client.post("/api/detect/analyze",
+                             files={"file": ("recomp.jpg", to_bytes(recompressed, "JPEG"), "image/jpeg")},
+                             data={"methods": "splicing"}).json()
+    assert "ela" in res_recomp["results"][0]["artifacts"]
+    assert "noise" in res_recomp["results"][0]["artifacts"]

@@ -8,10 +8,12 @@ ALLOWED_ARTIFACTS = {
     "annotated": ("image/png", "png"),
     "mask": ("image/png", "png"),
     "heatmap": ("image/png", "png"),
+    "ground_truth": ("image/png", "png"),
+    "ground_truth.png": ("image/png", "png"),
     "report.json": ("application/json", "json"),
     "report.html": ("text/html; charset=utf-8", "html"),
 }
-_METHOD_ARTIFACT = re.compile(r"^(copy_move|splicing|localization)\.(annotated|mask|heatmap|overlay|score)(\.png)?$")
+_METHOD_ARTIFACT = re.compile(r"^(copy_move|splicing|localization)\.(annotated|mask|heatmap|overlay|score|ela|noise|ground_truth)(\.png)?$")
 EXTRA_ARTIFACTS = {"analysis.json": ("application/json", "json"),
                    "watermarked.png": ("image/png", "png"), "watermarked.jpg": ("image/jpeg", "jpg")}
 ATTACK_LAB_ARTIFACTS = {

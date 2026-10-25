@@ -8,6 +8,20 @@ MethodStatus = Literal[
 ]
 
 
+class EvaluationMetrics(BaseModel):
+    tp: int = 0
+    fp: int = 0
+    tn: int = 0
+    fn: int = 0
+    precision: float | None = None
+    recall: float | None = None
+    f1: float | None = None
+    iou: float | None = None
+    gt_pixels: int = 0
+    pred_pixels: int = 0
+    semantics_note: str | None = None
+
+
 class MethodResult(BaseModel):
     method: MethodId
     category: Literal["copy_move", "splicing", "local_manipulation"]
@@ -23,6 +37,7 @@ class MethodResult(BaseModel):
     region_count: int = 0
     regions: list[dict] = []
     metrics: dict = {}
+    evaluation: EvaluationMetrics | None = None
     processing_ms: float = 0.0
     artifacts: dict[str, str] = {}
     warnings: list[str] = []
@@ -37,6 +52,7 @@ class AnalysisResponse(BaseModel):
     artifact_ttl_seconds: int
     report_json: str
     disclaimer: str
+    ground_truth: str | None = None
 
 
 class MethodCapability(BaseModel):

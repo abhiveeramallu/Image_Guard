@@ -1,6 +1,8 @@
+import io
 import logging
 from typing import Annotated
 
+import cv2
 import numpy as np
 from fastapi import APIRouter, File, Form, Query, Response, UploadFile
 from PIL import Image
@@ -8,14 +10,16 @@ from PIL import Image
 from app.api.deps import job_slot, store
 from app.core.config import get_settings
 from app.core.errors import ApiError
-from app.schemas.analysis import AnalysisResponse, MethodResult
+from app.schemas.analysis import AnalysisResponse, EvaluationMetrics, MethodResult
 from app.services import copy_move_service as cm
 from app.services import image_service as imgs
 from app.services import localization_service as loc
 from app.services import report_service
 from app.services import splicing_service as sp
 from app.services.artifact_store import ArtifactStore
-from app.services.forensics_common import heatmap_overlay, mask_overlay, red_layer_png, score_png16
+from app.services.forensics_common import (
+    heatmap_overlay, mask_overlay, pixel_counts, prf, red_layer_png, score_png16,
+)
 
 router = APIRouter()
 settings = get_settings()
@@ -63,6 +67,12 @@ def _map_result(method, out, rgb, aid, files, *, name, version, experimental, ev
         files[f"{method}.mask"] = imgs.encode_png_array(out.mask)
         files[f"{method}.overlay"] = imgs.encode_png_array(mask_overlay(rgb, out.mask))
         names += ["mask", "overlay"]
+    if getattr(out, "ela_image", None) is not None:
+        files[f"{method}.ela"] = imgs.encode_png_array(out.ela_image)
+        names.append("ela")
+    if getattr(out, "noise_score", None) is not None:
+        files[f"{method}.noise"] = imgs.encode_png_array(heatmap_overlay(rgb, out.noise_score))
+        names.append("noise")
     metrics = dict(out.metrics)
     return MethodResult(
         method=method, category=category, evidence_type=evidence, status=out.status, status_reason=out.status_reason,
@@ -82,6 +92,7 @@ def _unavailable(reason: str) -> MethodResult:
 @router.post("/detect/analyze", response_model=AnalysisResponse)
 def analyze(
     file: Annotated[UploadFile, File(description="JPEG or PNG image to analyse")],
+    ground_truth_file: Annotated[UploadFile | None, File(description="Optional ground truth manipulation mask for post-detection evaluation")] = None,
     methods: Annotated[str, Form(description="Comma list: copy_move, splicing, localization, all_supported")] = "copy_move",
     splicing_threshold: Annotated[float, Form(ge=0.05, le=0.99)] = 0.5,
     localization_threshold: Annotated[float, Form(ge=0.01, le=0.99)] = 0.5,
@@ -102,8 +113,38 @@ def analyze(
         flat.paste(img, mask=img.getchannel("A"))
         img = flat
     rgb = np.asarray(img.convert("RGB"))
+    H, W = rgb.shape[:2]
+
+    # Ground truth mask decoding and validation (kept completely separate from detector execution)
+    gt_mask: np.ndarray | None = None
+    if ground_truth_file and ground_truth_file.filename:
+        try:
+            gt_data = imgs.read_upload(ground_truth_file, settings.max_upload_bytes, "ground truth mask")
+            pil_gt = Image.open(io.BytesIO(gt_data)).convert("L")
+            gt_arr = np.asarray(pil_gt)
+            mask_h, mask_w = gt_arr.shape[:2]
+            if (mask_h, mask_w) != (H, W):
+                if (mask_w, mask_h) == (H, W) and H != W:
+                    gt_arr = cv2.transpose(gt_arr)
+                    mask_h, mask_w = gt_arr.shape[:2]
+                aspect_mask = mask_w / mask_h if mask_h > 0 else 0.0
+                aspect_img = W / H if H > 0 else 0.0
+                if abs(aspect_mask - aspect_img) < 0.05 and mask_h > 0 and mask_w > 0:
+                    gt_arr = cv2.resize(gt_arr, (W, H), interpolation=cv2.INTER_NEAREST)
+                else:
+                    raise ApiError(400, "dimension_mismatch",
+                                   f"Ground-truth mask dimensions ({mask_h}, {mask_w}) do not match image dimensions ({H}, {W}).")
+            gt_mask = np.where(gt_arr > 127, 255, 0).astype(np.uint8)
+        except ApiError:
+            raise
+        except Exception as e:
+            log.warning("Could not process ground-truth mask: %s", e)
+
     aid = ArtifactStore.new_id()
     files: dict[str, bytes] = {}
+    if gt_mask is not None:
+        files["ground_truth"] = imgs.encode_png_array(gt_mask)
+
     results: list[MethodResult] = []
     cm_params = cm.CopyMoveParams(max_dimension=max_dimension, n_features=n_features, ratio=ratio, min_matches=min_matches,
                                   min_displacement=min_displacement)
@@ -137,11 +178,40 @@ def analyze(
                 results.append(MethodResult(method=m, category=cat, evidence_type=ev, status="failed",
                                             status_reason="The method failed while processing this image.", method_name=m,
                                             method_version="-", experimental=m == "splicing"))
+
+    # Post-detection evaluation if ground-truth mask is provided
+    if gt_mask is not None:
+        for r in results:
+            pred_mask = None
+            if r.method == "copy_move" and "copy_move.mask" in files:
+                pred_mask = np.asarray(Image.open(io.BytesIO(files["copy_move.mask"])))
+            elif r.method in ("splicing", "localization") and f"{r.method}.mask" in files:
+                pred_mask = np.asarray(Image.open(io.BytesIO(files[f"{r.method}.mask"])))
+
+            if pred_mask is not None:
+                counts = pixel_counts(pred_mask, gt_mask)
+                metrics_prf = prf(counts)
+                eval_metrics = EvaluationMetrics(
+                    tp=counts["tp"], fp=counts["fp"], tn=counts["tn"], fn=counts["fn"],
+                    precision=round(metrics_prf["precision"], 4) if metrics_prf["precision"] is not None else None,
+                    recall=round(metrics_prf["recall"], 4) if metrics_prf["recall"] is not None else None,
+                    f1=round(metrics_prf["f1"], 4) if metrics_prf["f1"] is not None else None,
+                    iou=round(metrics_prf["iou"], 4) if metrics_prf["iou"] is not None else None,
+                    gt_pixels=int((gt_mask > 0).sum()),
+                    pred_pixels=int((pred_mask > 0).sum()),
+                    semantics_note="Post-detection evaluation against provided ground truth. The detector evaluated the composite independently without prior knowledge of the manipulation.",
+                )
+                r.evaluation = eval_metrics
+                r.metrics["evaluation"] = eval_metrics.model_dump()
+                r.artifacts["ground_truth"] = f"/api/results/{aid}/ground_truth"
+
     resp = {
         "analysis_id": aid, "image": {"width": rgb.shape[1], "height": rgb.shape[0], "source_format": dec.source_format},
         "requested_methods": wanted, "results": [r.model_dump() for r in results],
         "artifact_ttl_seconds": settings.artifact_ttl_seconds, "report_json": f"/api/results/{aid}/analysis.json",
     }
+    if gt_mask is not None:
+        resp["ground_truth"] = f"/api/results/{aid}/ground_truth"
     report = report_service.build_analysis_report(resp, imgs.sanitize_stem(file.filename) if file.filename else None)
     files["analysis.json"] = report_service.report_json_bytes(report)
     store.put(aid, files)
