@@ -88,5 +88,6 @@ class ExperimentAnalysisResponse(BaseModel):
     report_json: str
     report_html: str
     processing_ms: float
+    is_baseline_only: bool = False
     warnings: list[str] = Field(default_factory=list)
     disclaimer: str

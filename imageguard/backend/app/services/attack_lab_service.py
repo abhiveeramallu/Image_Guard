@@ -54,8 +54,8 @@ def prf(c: dict[str, int]) -> dict[str, float | None]:
     tp, fp, fn = c["tp"], c["fp"], c["fn"]
     precision = tp / (tp + fp) if (tp + fp) else None
     recall = tp / (tp + fn) if (tp + fn) else None
-    f1 = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else None
-    iou = tp / (tp + fp + fn) if (tp + fp + fn) else None
+    f1 = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn and tp + fn > 0) else None
+    iou = tp / (tp + fp + fn) if (tp + fp + fn and tp + fn > 0) else None
     return {"precision": precision, "recall": recall, "f1": f1, "iou": iou}
 
 
@@ -481,6 +481,18 @@ def report_html_bytes(report: dict[str, Any], images: dict[str, bytes]) -> bytes
     base_vis = e(str(base.get("visible_watermark_text") if base.get("has_visible_watermark") else "None"))
     base_invis = e(str(base.get("invisible_owner") if base.get("has_invisible_watermark") else "None"))
 
+    # Baseline notice
+    is_baseline_only = len(report.get("history", [])) == 0
+    baseline_notice_html = ""
+    if is_baseline_only:
+        baseline_notice_html = (
+            "<div class='note' style='border-left-color: #3b82f6; background: #eff6ff;'>"
+            "<b>Baseline-Only Reference Analysis:</b> No attack transformations were applied in this experiment. "
+            "Forensic detectors evaluated the unmodified protected baseline to establish a reference detection profile. "
+            "Any candidate regions flagged represent natural image features, repeated textures, or heuristic false positives on clean input—not proof of tampering."
+            "</div>"
+        )
+
     doc = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -520,6 +532,8 @@ def report_html_bytes(report: dict[str, Any], images: dict[str, bytes]) -> bytes
 <div class="warning">
   <b>Disclaimer &amp; Methodological Notice:</b> {e(report.get('disclaimer', ''))}
 </div>
+
+{baseline_notice_html}
 
 <h2>Core Forensic Questions</h2>
 <div class="qa-card">

@@ -388,6 +388,19 @@ def transform(
         "height": mod_rgb.shape[0],
         "format": "PNG",
     }
+
+    # Purge any stale detector artifacts and reports from previous analysis runs
+    with store._lock:
+        item = store._items.get(experiment_id)
+        if item:
+            files_dict = item[1]
+            stale_keys = [
+                k for k in list(files_dict.keys())
+                if k.startswith(("copy_move.", "splicing.", "localization.", "experiment_report."))
+            ]
+            for k in stale_keys:
+                files_dict.pop(k, None)
+
     _save_meta(experiment_id, meta, new_files)
 
     artifacts = {
@@ -427,11 +440,20 @@ def reset_to_baseline(experiment_id: Annotated[str, Form()]) -> ExperimentTransf
     meta["history"] = []
     meta["ground_truth"] = {"has_mask": False, "regions": []}
     meta["modified_image"] = {"width": w, "height": h, "format": "PNG"}
+    meta.pop("analysis", None)
+    meta.pop("detection_results", None)
 
     with store._lock:
         item = store._items.get(experiment_id)
-        if item and "ground_truth.png" in item[1]:
-            del item[1]["ground_truth.png"]
+        if item:
+            files_dict = item[1]
+            stale_keys = [
+                k for k in list(files_dict.keys())
+                if k.startswith(("copy_move.", "splicing.", "localization.", "experiment_report."))
+                or k == "ground_truth.png"
+            ]
+            for k in stale_keys:
+                files_dict.pop(k, None)
 
     new_files = {
         "modified.png": base_bytes,
@@ -462,8 +484,8 @@ def analyze_experiment(
     localization_threshold: Annotated[float, Form(ge=0.01, le=0.99)] = 0.5,
     max_dimension: Annotated[int, Form(ge=256, le=3000)] = 1280,
     n_features: Annotated[int, Form(ge=500, le=20000)] = 5000,
-    ratio: Annotated[float, Form(ge=0.5, le=0.95)] = 0.75,
-    min_matches: Annotated[int, Form(ge=4, le=100)] = 8,
+    ratio: Annotated[float, Form(ge=0.5, le=0.95)] = 0.80,
+    min_matches: Annotated[int, Form(ge=4, le=100)] = 6,
     min_displacement: Annotated[float, Form(ge=4, le=500)] = 24,
 ) -> ExperimentAnalysisResponse:
     t0 = time.perf_counter()
@@ -503,6 +525,16 @@ def analyze_experiment(
                 detector_files["copy_move.mask"] = imgs.encode_png_array(cm_out.mask)
                 detector_files["copy_move.heatmap"] = imgs.encode_png_array(cm_out.heatmap)
                 pred_masks["copy_move"] = cm_out.mask
+                log.info(
+                    "Attack Lab copy-move analysis for %s: status=%s, keypoints=%d, raw_matches=%d, filtered=%d, retained=%d, regions=%d",
+                    experiment_id,
+                    cm_out.status,
+                    cm_out.keypoints,
+                    cm_out.matches_before_filtering,
+                    cm_out.matches_after_descriptor_filtering,
+                    cm_out.matches_retained,
+                    len(cm_out.regions),
+                )
                 detection_results.append({
                     "method": "copy_move",
                     "status": cm_out.status,
@@ -512,7 +544,11 @@ def analyze_experiment(
                     "processing_ms": cm_out.processing_ms,
                     "metrics": {
                         "keypoints": cm_out.keypoints,
+                        "raw_matches": cm_out.matches_before_filtering,
+                        "filtered_matches": cm_out.matches_after_descriptor_filtering,
                         "matches_retained": cm_out.matches_retained,
+                        "accepted_clusters": len(cm_out.regions),
+                        "rejected_clusters": getattr(cm_out, "rejected_clusters", 0),
                     },
                     "artifacts": {
                         "annotated": f"/api/results/{experiment_id}/copy_move.annotated",
@@ -656,23 +692,38 @@ def analyze_experiment(
     eval_list: list[MethodEvaluation] = []
     gt_bytes = store.get(experiment_id, "ground_truth.png")
     gt_mask = np.asarray(Image.open(io.BytesIO(gt_bytes))) if gt_bytes else None
+    hist = meta.get("history", [])
+    is_baseline_only = len(hist) == 0
 
-    for m_name, p_mask in pred_masks.items():
-        eval_metrics = lab.evaluate_detection(gt_mask, p_mask, m_name)
-        if eval_metrics:
-            eval_list.append(MethodEvaluation(
-                method=m_name,
-                metrics=EvaluationMetrics(**eval_metrics),
-                notes=eval_metrics.get("semantics_note", ""),
-            ))
+    if gt_mask is not None and (gt_mask > 0).sum() > 0:
+        for m_name, p_mask in pred_masks.items():
+            eval_metrics = lab.evaluate_detection(gt_mask, p_mask, m_name)
+            if eval_metrics:
+                eval_list.append(MethodEvaluation(
+                    method=m_name,
+                    metrics=EvaluationMetrics(**eval_metrics),
+                    notes=eval_metrics.get("semantics_note", ""),
+                ))
+    elif is_baseline_only:
+        # On a baseline-only image, ground truth has 0 tampered pixels.
+        # Evaluate detector predictions against an empty mask to document false alarms on clean input.
+        H, W = mod_rgb.shape[:2]
+        clean_gt = np.zeros((H, W), dtype=np.uint8)
+        for m_name, p_mask in pred_masks.items():
+            eval_metrics = lab.evaluate_detection(clean_gt, p_mask, m_name)
+            if eval_metrics:
+                eval_list.append(MethodEvaluation(
+                    method=m_name,
+                    metrics=EvaluationMetrics(**eval_metrics),
+                    notes="Baseline clean evaluation: 0 ground-truth tampered pixels. Flagged candidate pixels represent false positives on clean input.",
+                ))
 
     # Compile Structured Interpretations (Questions A, B, C)
-    hist = meta.get("history", [])
-    if hist:
+    if not is_baseline_only:
         steps_summary = "; ".join(f"Step {s['step']}: {s['description']}" for s in hist)
         ans_a = f"Yes. Controlled transformation(s) applied in simulation: {steps_summary}."
     else:
-        ans_a = "No transformations applied. The modified image is identical to the baseline."
+        ans_a = "No transformations applied. The modified image is identical to the baseline (Baseline-Only Analysis)."
 
     # Question B
     base_info = meta.get("baseline_image", {})
@@ -683,7 +734,10 @@ def analyze_experiment(
         b_parts.append("Visible watermark was included in the baseline.")
     if wm_invisible:
         if wm_result:
-            b_parts.append(f"Invisible watermark verification returned '{wm_result['status']}': {wm_result['status_reason']}")
+            if is_baseline_only:
+                b_parts.append(f"Invisible watermark verification on unmodified baseline: '{wm_result['status']}' (Owner ID: {wm_result.get('owner') or 'N/A'}). Watermark payload is intact as expected.")
+            else:
+                b_parts.append(f"Invisible watermark verification returned '{wm_result['status']}': {wm_result['status_reason']}")
         else:
             b_parts.append("Invisible watermark was embedded, but verification was not requested in this analysis.")
     elif not wm_visible and not wm_invisible:
@@ -694,13 +748,29 @@ def analyze_experiment(
 
     # Question C
     c_parts: list[str] = []
+    has_candidates = any(d.get("region_count", 0) > 0 for d in detection_results)
     for d in detection_results:
         m = d.get("method")
         s = d.get("status")
         regs = d.get("region_count", 0)
         c_parts.append(f"[{m}] Status '{s}' with {regs} candidate region(s).")
-    ans_c = " ".join(c_parts) or "No detection methods executed."
-    ans_c += " Reminder: Detector findings are indicators for human review, not proof of authenticity or forgery."
+    
+    if is_baseline_only:
+        if has_candidates:
+            ans_c = (
+                "Baseline-only findings (unmodified image): " + " ".join(c_parts) +
+                " Note: Because no transformation was applied to this baseline, any candidate regions detected above "
+                "represent natural image features, repeated scene structures, or heuristic detector false positives "
+                "(such as ELA/noise variance)—not evidence of image tampering."
+            )
+        else:
+            ans_c = (
+                "Baseline clean: No candidate regions were detected on the unmodified baseline image. " +
+                " ".join(c_parts) + " This provides a clean reference baseline for subsequent tampering tests."
+            )
+    else:
+        ans_c = " ".join(c_parts) or "No detection methods executed."
+        ans_c += " Reminder: Detector findings are indicators for human review, not proof of authenticity or forgery."
 
     total_ms = round((time.perf_counter() - t0) * 1000, 1)
 
@@ -729,6 +799,7 @@ def analyze_experiment(
         "answers": answers_dict,
         "artifacts": artifacts,
         "processing_ms": total_ms,
+        "is_baseline_only": is_baseline_only,
     })
 
     # Prepare HTML report images

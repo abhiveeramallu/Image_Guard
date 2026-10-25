@@ -1,9 +1,9 @@
 import { Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
-import AttackLabPage from './pages/AttackLabPage'
 import Dashboard from './pages/Dashboard'
 import DetectionPage from './pages/DetectionPage'
 import HowItWorksPage from './pages/HowItWorksPage'
+import ManualForgeryLabPage from './pages/ManualForgeryLabPage'
 import WatermarkPage from './pages/WatermarkPage'
 
 export default function App() {
@@ -13,7 +13,8 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="detect" element={<DetectionPage />} />
         <Route path="watermark" element={<WatermarkPage />} />
-        <Route path="attack-lab" element={<AttackLabPage />} />
+        <Route path="forgery-lab" element={<ManualForgeryLabPage />} />
+        <Route path="attack-lab" element={<ManualForgeryLabPage />} />
         <Route path="how-it-works" element={<HowItWorksPage />} />
         <Route path="*" element={<Dashboard />} />
       </Route>

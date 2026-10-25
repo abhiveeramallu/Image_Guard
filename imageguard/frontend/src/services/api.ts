@@ -1,7 +1,7 @@
 import axios, { AxiosError, type AxiosProgressEvent } from 'axios'
 import type {
   AnalysisResult, AnalyzeSettings, Capabilities, DetectionResult, DetectionSettings, DetectionStatus,
-  ExperimentAnalysisResult, ExperimentPrepareResult, ExperimentTransformResult, InvisibleEmbedResult,
+  ExperimentAnalysisResult, InvisibleEmbedResult,
   InvisibleStrength, InvisibleVerifyResult, MethodId, WatermarkResult, WatermarkSettings,
 } from '../types/api'
 
@@ -171,111 +171,39 @@ export async function verifyInvisible(file: File, opts: CallOptions = {}): Promi
   }
 }
 
-// ---- Attack Lab API ----------------------------------------------------------------------
-export interface PrepareLabOptions {
-  visible_watermark: boolean
-  watermark_text: string
-  watermark_position: string
-  watermark_opacity: number
-  watermark_font_size: number
-  watermark_color: string
-  invisible_watermark: boolean
-  invisible_owner: string
-  invisible_strength: string
-}
-
-export async function prepareAttackLab(
-  file: File, options: PrepareLabOptions, logo: File | null = null, opts: CallOptions = {},
-): Promise<ExperimentPrepareResult> {
-  const form = new FormData()
-  form.append('file', file)
-  form.append('visible_watermark', String(options.visible_watermark))
-  form.append('watermark_text', options.watermark_text)
-  form.append('watermark_position', options.watermark_position)
-  form.append('watermark_opacity', String(options.watermark_opacity))
-  form.append('watermark_font_size', String(options.watermark_font_size))
-  form.append('watermark_color', options.watermark_color)
-  form.append('invisible_watermark', String(options.invisible_watermark))
-  form.append('invisible_owner', options.invisible_owner)
-  form.append('invisible_strength', options.invisible_strength)
-  if (logo) form.append('logo', logo)
-
-  try {
-    const res = await http.post('/api/attack-lab/prepare', form, {
-      signal: opts.signal, timeout: 60_000, onUploadProgress: progress(opts.onProgress),
-    })
-    return res.data as ExperimentPrepareResult
-  } catch (err) {
-    throw err instanceof ApiRequestError ? err : await toApiError(err)
-  }
-}
-
-export async function transformAttackLab(
-  experimentId: string,
-  transformation: string,
-  target: 'current' | 'baseline',
-  params: Record<string, unknown>,
-  donorFile: File | null = null,
-  opts: CallOptions = {},
-): Promise<ExperimentTransformResult> {
-  const form = new FormData()
-  form.append('experiment_id', experimentId)
-  form.append('transformation', transformation)
-  form.append('target', target)
-  form.append('params', JSON.stringify(params))
-  if (donorFile) form.append('donor_file', donorFile)
-
-  try {
-    const res = await http.post('/api/attack-lab/transform', form, {
-      signal: opts.signal, timeout: 60_000, onUploadProgress: progress(opts.onProgress),
-    })
-    return res.data as ExperimentTransformResult
-  } catch (err) {
-    throw err instanceof ApiRequestError ? err : await toApiError(err)
-  }
-}
-
-export async function resetAttackLab(experimentId: string, opts: CallOptions = {}): Promise<ExperimentTransformResult> {
-  const form = new FormData()
-  form.append('experiment_id', experimentId)
-  try {
-    const res = await http.post('/api/attack-lab/reset', form, { signal: opts.signal, timeout: 30_000 })
-    return res.data as ExperimentTransformResult
-  } catch (err) {
-    throw err instanceof ApiRequestError ? err : await toApiError(err)
-  }
-}
-
-export async function analyzeAttackLab(
-  experimentId: string,
-  methods: string[],
-  settings?: { splicing_threshold?: number; localization_threshold?: number },
+// ---- Manual Forgery Lab API ----------------------------------------------------------------
+export async function analyzeManualForgery(
+  modifiedFile: Blob | File,
+  originalFile?: Blob | File | null,
+  groundTruthFile?: Blob | File | null,
+  methods: string[] = ['copy_move', 'splicing', 'watermark_verify'],
+  settings?: {
+    splicing_threshold?: number
+    localization_threshold?: number
+    ratio?: number
+    min_matches?: number
+    min_displacement?: number
+  },
   opts: CallOptions = {},
 ): Promise<ExperimentAnalysisResult> {
   const form = new FormData()
-  form.append('experiment_id', experimentId)
+  form.append('file', modifiedFile, 'modified.png')
+  if (originalFile) form.append('original_file', originalFile, 'original.png')
+  if (groundTruthFile) form.append('ground_truth_file', groundTruthFile, 'ground_truth.png')
   form.append('methods', methods.join(','))
-  if (settings?.splicing_threshold !== undefined) {
-    form.append('splicing_threshold', String(settings.splicing_threshold))
-  }
-  if (settings?.localization_threshold !== undefined) {
-    form.append('localization_threshold', String(settings.localization_threshold))
-  }
+  if (settings?.splicing_threshold !== undefined) form.append('splicing_threshold', String(settings.splicing_threshold))
+  if (settings?.localization_threshold !== undefined) form.append('localization_threshold', String(settings.localization_threshold))
+  if (settings?.ratio !== undefined) form.append('ratio', String(settings.ratio))
+  if (settings?.min_matches !== undefined) form.append('min_matches', String(settings.min_matches))
+  if (settings?.min_displacement !== undefined) form.append('min_displacement', String(settings.min_displacement))
 
   try {
-    const res = await http.post('/api/attack-lab/analyze', form, {
-      signal: opts.signal, timeout: 180_000, onUploadProgress: progress(opts.onProgress),
+    const res = await http.post('/api/forgery-lab/analyze', form, {
+      signal: opts.signal,
+      timeout: 180_000,
+      onUploadProgress: progress(opts.onProgress),
     })
     return res.data as ExperimentAnalysisResult
-  } catch (err) {
-    throw err instanceof ApiRequestError ? err : await toApiError(err)
-  }
-}
-
-export async function getAttackLabExperiment(experimentId: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
-  try {
-    const res = await http.get(`/api/attack-lab/experiments/${experimentId}`, { signal, timeout: 30_000 })
-    return res.data as Record<string, unknown>
   } catch (err) {
     throw err instanceof ApiRequestError ? err : await toApiError(err)
   }

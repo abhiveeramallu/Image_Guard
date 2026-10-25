@@ -16,11 +16,14 @@ The algorithm cannot tell which side is the original and which is the copy, so r
 are reported symmetrically as region_a / region_b. Localization is approximate (hulls
 of sparse keypoints), not pixel-accurate. No probability/confidence is produced.
 """
+import logging
 import time
 from dataclasses import asdict, dataclass
 
 import cv2
 import numpy as np
+
+log = logging.getLogger("imageguard.copy_move")
 
 METHOD_NAME = "orb-hamming-ransac"
 METHOD_VERSION = "1.0.0"
@@ -39,14 +42,14 @@ LIMITATIONS = [
 class CopyMoveParams:
     max_dimension: int = 1280      # longest side of the analysis copy
     n_features: int = 5000         # ORB keypoint budget
-    ratio: float = 0.75            # Lowe ratio threshold (best / second best)
+    ratio: float = 0.80            # Lowe ratio threshold (best / second best)
     max_hamming: int = 64          # absolute descriptor distance cap (of 256 bits)
     min_displacement: float = 24.0  # min pixel distance (analysis scale) between a matched pair
-    min_matches: int = 8           # min inlier pairs for a cluster to count
+    min_matches: int = 6           # min inlier pairs for a cluster to count
     ransac_threshold: float = 3.0  # px reprojection tolerance (analysis scale)
     max_regions: int = 5           # max clusters returned
     min_keypoints: int = 50        # fewer keypoints => inconclusive (insufficient texture)
-    min_region_area: float = 400.0  # min hull area (analysis px^2) per side
+    min_region_area: float = 200.0  # min hull area (analysis px^2) per side
     repeat_limit: int = 6          # >= this many distinct clusters => repetitive pattern, inconclusive
 
 
@@ -78,13 +81,15 @@ class DetectionOutput:
     annotated: np.ndarray  # RGB uint8
     mask: np.ndarray       # HxW uint8 0/255
     heatmap: np.ndarray    # RGB uint8
+    accepted_clusters: int = 0
+    rejected_clusters: int = 0
 
 
 # ----------------------------------------------------------------------------------------
 def _match(des: np.ndarray, pts: np.ndarray, p: CopyMoveParams):
     """Return (pairs [(i, j, dist)], n_candidates). Pairs are unordered-unique."""
     n = len(des)
-    k = min(10, n)
+    k = min(30, n)
     bf = cv2.BFMatcher(cv2.NORM_HAMMING)
     knn = bf.knnMatch(des, des, k=k)
     candidates = 0
@@ -110,7 +115,8 @@ def _match(des: np.ndarray, pts: np.ndarray, p: CopyMoveParams):
         best, second = valid
         if best.distance > p.max_hamming:
             continue
-        if best.distance >= p.ratio * second.distance:
+        # Lowe ratio test: filter out ambiguous matches unless best match is an exact/near-exact clone (<= 16 bits difference)
+        if best.distance > 16 and best.distance >= p.ratio * second.distance:
             continue
         key = (min(i, best.trainIdx), max(i, best.trainIdx))
         if key not in seen or best.distance < seen[key]:
@@ -204,15 +210,21 @@ def detect_copy_move(rgb: np.ndarray, params: CopyMoveParams | None = None) -> D
     kps, des = orb.detectAndCompute(gray, None)
     n_kp = len(kps) if kps else 0
 
-    def finish(status, reason, regions, retained, before, after, pts_a, pts_b, mask):
+    def finish(status, reason, regions, retained, before, after, pts_a, pts_b, mask, accepted=0, rejected=0):
         annotated = _annotate(rgb, regions, pts_a, pts_b)
         heat = _heatmap(rgb, pts_a + pts_b)
+        log.info(
+            "Copy-move finished: status=%s, keypoints=%d, raw_matches=%d, filtered_matches=%d, "
+            "retained=%d, accepted_regions=%d, rejected=%d (reason: %s)",
+            status, n_kp, before, after, retained, len(regions), rejected, reason
+        )
         return DetectionOutput(
             status=status, status_reason=reason, original_size=(W, H), analysis_size=(aw, ah), scale=scale,
             keypoints=n_kp, matches_before_filtering=before, matches_after_descriptor_filtering=after,
             matches_retained=retained, regions=regions, warnings=warnings,
             processing_ms=round((time.perf_counter() - t0) * 1000, 1), settings=asdict(p),
-            annotated=annotated, mask=mask, heatmap=heat)
+            annotated=annotated, mask=mask, heatmap=heat,
+            accepted_clusters=accepted, rejected_clusters=rejected)
 
     empty_mask = np.zeros((H, W), np.uint8)
     if des is None or n_kp < p.min_keypoints:
@@ -223,6 +235,7 @@ def detect_copy_move(rgb: np.ndarray, params: CopyMoveParams | None = None) -> D
     pts = np.array([k.pt for k in kps], np.float32)
     pairs, candidates = _match(des, pts, p)
     after = len(pairs)
+    log.debug("ORB matching: keypoints=%d, candidates=%d, pairs_after_filtering=%d", n_kp, candidates, after)
     if after < p.min_matches:
         return finish("no_candidate_regions_found",
                       f"Only {after} descriptor matches survived filtering (minimum {p.min_matches} needed to form a cluster).",
@@ -251,6 +264,26 @@ def detect_copy_move(rgb: np.ndarray, params: CopyMoveParams | None = None) -> D
             dists.append(d)
         pa = np.asarray(pa, np.float32) * inv
         pb = np.asarray(pb, np.float32) * inv
+
+        # Prune distant spatial outliers if cluster has sufficient points,
+        # ensuring bounding box and convex hull tightly conform to the duplicated object.
+        if len(pa) >= 6:
+            med_a = np.median(pa, axis=0)
+            dists_a = np.linalg.norm(pa - med_a, axis=1)
+            mad_a = np.median(np.abs(dists_a - np.median(dists_a)))
+            thresh_a = max(40.0 * inv, np.median(dists_a) + 3.0 * (mad_a * 1.4826 + 1e-6))
+
+            med_b = np.median(pb, axis=0)
+            dists_b = np.linalg.norm(pb - med_b, axis=1)
+            mad_b = np.median(np.abs(dists_b - np.median(dists_b)))
+            thresh_b = max(40.0 * inv, np.median(dists_b) + 3.0 * (mad_b * 1.4826 + 1e-6))
+
+            sp_inliers = (dists_a <= thresh_a) & (dists_b <= thresh_b)
+            if sp_inliers.sum() >= 4:
+                pa = pa[sp_inliers]
+                pb = pb[sp_inliers]
+                dists = [dists[idx_d] for idx_d, keep in enumerate(sp_inliers) if keep]
+
         if len(pa) < 3:
             rejected += 1
             continue
@@ -261,10 +294,13 @@ def detect_copy_move(rgb: np.ndarray, params: CopyMoveParams | None = None) -> D
             continue
         poly_a, box_a = _hull_polygon(pa, pad, (H, W))
         poly_b, box_b = _hull_polygon(pb, pad, (H, W))
-        if _bbox_overlap(box_a, box_b) > 0.5:
+        tr = _transform_summary(M)
+        trans_dist = float(np.hypot(tr["translation_x"], tr["translation_y"]))
+        ov = _bbox_overlap(box_a, box_b)
+        # Discard trivial self-matches or extreme bounding-box overlaps
+        if ov > 0.75 or (ov > 0.5 and trans_dist < p.min_displacement):
             rejected += 1
             continue
-        tr = _transform_summary(M)
         if not 0.5 <= tr["scale"] <= 2.0:
             rejected += 1
             continue
@@ -275,20 +311,20 @@ def detect_copy_move(rgb: np.ndarray, params: CopyMoveParams | None = None) -> D
         for poly in (poly_a, poly_b):
             cv2.fillPoly(mask, [poly.astype(np.int32)], 255)
         regions.append(Region(
-            id=rid, matches=len(members), mean_hamming_distance=round(float(np.mean(dists)), 2),
+            id=rid, matches=len(pa), mean_hamming_distance=round(float(np.mean(dists)), 2),
             transform=tr,
             region_a={"bbox": box_a, "polygon": poly_a.tolist()},
             region_b={"bbox": box_b, "polygon": poly_b.tolist()},
         ))
         all_a.append(pa); all_b.append(pb)
-        retained += len(members)
+        retained += len(pa)
     if rejected:
         warnings.append(f"{rejected} candidate cluster(s) were discarded as too small, overlapping, or implausible.")
 
     if not regions:
         return finish("no_candidate_regions_found",
                       "Descriptor matches were found but none formed a geometrically consistent, sufficiently large cluster.",
-                      [], 0, candidates, after, [], [], empty_mask)
+                      [], 0, candidates, after, [], [], empty_mask, accepted=0, rejected=rejected)
 
     if len(raw_clusters) >= p.repeat_limit:
         warnings.append(f"{len(raw_clusters)} distinct consistent transforms were found, which usually indicates a repetitive pattern rather than a single duplicated region.")
@@ -298,7 +334,7 @@ def detect_copy_move(rgb: np.ndarray, params: CopyMoveParams | None = None) -> D
         status = "candidate_regions_found"
         reason = (f"{len(regions)} cluster(s) of mutually consistent ORB matches were found "
                   f"({retained} retained matches). These are candidates only and need visual review.")
-    return finish(status, reason, regions, retained, candidates, after, all_a, all_b, mask)
+    return finish(status, reason, regions, retained, candidates, after, all_a, all_b, mask, accepted=len(regions), rejected=rejected)
 
 
 # ----------------------------------------------------------------------------------------

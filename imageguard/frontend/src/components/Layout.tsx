@@ -6,7 +6,7 @@ const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/detect', label: 'Forgery Detection', icon: ScanSearch },
   { to: '/watermark', label: 'Watermark Studio', icon: Stamp },
-  { to: '/attack-lab', label: 'Attack Lab', icon: FlaskConical },
+  { to: '/forgery-lab', label: 'Manual Forgery Lab', icon: FlaskConical },
   { to: '/how-it-works', label: 'How It Works', icon: BookOpen },
 ]
 

@@ -11,7 +11,7 @@ ALLOWED_ARTIFACTS = {
     "report.json": ("application/json", "json"),
     "report.html": ("text/html; charset=utf-8", "html"),
 }
-_METHOD_ARTIFACT = re.compile(r"^(copy_move|splicing|localization)\.(annotated|mask|heatmap|overlay|score)$")
+_METHOD_ARTIFACT = re.compile(r"^(copy_move|splicing|localization)\.(annotated|mask|heatmap|overlay|score)(\.png)?$")
 EXTRA_ARTIFACTS = {"analysis.json": ("application/json", "json"),
                    "watermarked.png": ("image/png", "png"), "watermarked.jpg": ("image/jpeg", "jpg")}
 ATTACK_LAB_ARTIFACTS = {

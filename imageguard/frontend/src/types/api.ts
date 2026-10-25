@@ -224,26 +224,6 @@ export interface GroundTruthInfo {
   notes?: string | null
 }
 
-export interface ExperimentPrepareResult {
-  experiment_id: string
-  original_image: ExperimentImageInfo
-  baseline_image: BaselineInfo
-  artifacts: Record<string, string>
-  history: TransformationStep[]
-  warnings: string[]
-}
-
-export interface ExperimentTransformResult {
-  experiment_id: string
-  transformation: string
-  params: Record<string, unknown>
-  image: ExperimentImageInfo
-  ground_truth: GroundTruthInfo
-  artifacts: Record<string, string>
-  history: TransformationStep[]
-  warnings: string[]
-}
-
 export interface EvaluationMetrics {
   tp: number
   fp: number

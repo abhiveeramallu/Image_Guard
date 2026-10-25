@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import (routes_analyze, routes_attack_lab, routes_capabilities, routes_detect, routes_health, routes_invisible,
+from app.api import (routes_analyze, routes_attack_lab, routes_capabilities, routes_detect, routes_forgery_lab, routes_health, routes_invisible,
                      routes_watermark)
 from app.core.config import APP_VERSION, get_settings
 from app.core.errors import install_error_handlers
@@ -33,3 +33,4 @@ app.include_router(routes_analyze.router, prefix="/api")
 app.include_router(routes_capabilities.router, prefix="/api")
 app.include_router(routes_invisible.router, prefix="/api")
 app.include_router(routes_attack_lab.router, prefix="/api")
+app.include_router(routes_forgery_lab.router, prefix="/api")

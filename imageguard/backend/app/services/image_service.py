@@ -95,6 +95,25 @@ def decode_image(
     return DecodedImage(image=img, has_alpha=has_alpha, source_format=fmt)
 
 
+def decode_to_rgb(
+    data: bytes,
+    *,
+    max_pixels: int,
+    max_side: int,
+    min_side: int = 1,
+    label: str = "image",
+) -> tuple[np.ndarray, DecodedImage]:
+    """Decode an upload, flatten alpha to white, and return (RGB uint8 ndarray, DecodedImage)."""
+    dec = decode_image(data, max_pixels=max_pixels, max_side=max_side, min_side=min_side, label=label)
+    img = dec.image
+    if dec.has_alpha:
+        flat = Image.new("RGB", img.size, (255, 255, 255))
+        flat.paste(img, mask=img.getchannel("A"))
+        img = flat
+    rgb = np.asarray(img.convert("RGB"))
+    return rgb, dec
+
+
 def encode_image(img: Image.Image, fmt: str) -> tuple[bytes, str, str]:
     """Encode to PNG or JPEG. Returns (bytes, media_type, extension)."""
     buf = io.BytesIO()

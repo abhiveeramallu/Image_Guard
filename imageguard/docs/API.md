@@ -121,6 +121,51 @@ download the image from `artifact`. 503 `watermark_unavailable` if no key is con
 `verified` = a payload whose HMAC (made with the server key) is valid was recovered. `inconclusive` = watermark-like signal with a valid header but failed check.
 Neither status proves ownership or image integrity.
 
+---
+# Manual Forgery Lab API
+
+## `POST /api/forgery-lab/analyze` (multipart/form-data)
+Primary endpoint for the interactive Manual Forgery Lab canvas workspace. Runs requested forensic detectors on client-modified pixels and compares results against user edit ground-truth masks.
+
+- `file`: Modified image exported from canvas (PNG/JPEG, required).
+- `original_file`: Pristine unmodified original image (optional).
+- `ground_truth_file`: Binary edit mask exported from canvas (white = modified pixels, optional).
+- `methods`: Comma-separated list from `copy_move`, `splicing`, `localization`, `watermark_verify` (default: `copy_move,splicing,watermark_verify`).
+- `splicing_threshold`: ELA/noise residual sensitivity (0.05–0.99, default 0.5).
+- `localization_threshold`: ONNX localization threshold (0.01–0.99, default 0.5).
+- `max_dimension`: Longest side of analysis copy (256–3000 px, default 1280).
+- `n_features`: ORB keypoint budget (500–20000, default 5000).
+- `ratio`: Lowe's ratio test (0.5–0.95, default 0.80).
+- `min_matches`: Minimum verified match count per cluster (4–100, default 6).
+- `min_displacement`: Minimum pixel separation for keypoint pairs (4–500 px, default 24).
+
+**Response:**
+Returns `ExperimentAnalysisResponse` containing:
+- `experiment_id`: Unique 128-bit analysis identifier.
+- `image`: Image metadata (width, height, format).
+- `detection_results`: Per-method candidate regions, status, keypoint matches, and visual overlays.
+- `watermark_verification`: Keyed DCT-QIM watermark verification result and HMAC status.
+- `evaluation`: Objective pixel-level metrics ($\text{TP}, \text{FP}, \text{FN}, \text{Precision}, \text{Recall}, F_1, \text{IoU}$) calculated against ground-truth mask.
+- `answers`: Structured answers addressing modification, watermark damage, and forensic candidate regions.
+- `artifacts`: Links to downloadable modified image, ground-truth mask, overlays, and reports.
+- `report_json` & `report_html`: Direct download URLs for reports.
+- `processing_ms`: Total execution time.
+- `disclaimer`: Forensic evidence review notice.
+
+## `GET /api/forgery-lab/reports/{analysis_id}?format=json|html`
+Downloads formatted forensic analysis reports:
+- `format=json`: Machine-readable evaluation report (`application/json`).
+- `format=html`: Standalone self-contained HTML report with embedded base64 artifacts (`text/html`).
+
+## `GET /api/forgery-lab/artifacts/{analysis_id}/{filename}`
+Serves forensic visual artifacts:
+- `modified.png`, `ground_truth.png`
+- `copy_move.overlay.png`, `copy_move.annotated.png`
+- `splicing.overlay.png`, `localization.overlay.png`
+
+---
+# Legacy Attack Lab API (Backward-Compatible)
+
 ## `POST /api/attack-lab/prepare` (multipart/form-data)
 Prepares an image session for Attack Lab experiments and optionally adds visible/invisible watermark baseline protection.
 - `file`: JPEG or PNG image
