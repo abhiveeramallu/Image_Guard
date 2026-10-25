@@ -78,41 +78,44 @@ ImageGuard operates as a decoupled client-server application. The React SPA comm
 flowchart TD
     subgraph Client ["Frontend Client (React 18 + TypeScript + Vite)"]
         UI_Dash["Dashboard / Status Overview"]
-        UI_Detect["Forgery Detection Suite\n(Multi-detector view, ELA & Noise maps)"]
-        UI_WM["Watermark Studio\n(Visible editor & Invisible QIM manager)"]
+        UI_Detect["Forgery Detection Suite<br/>(Single Image & Splicing Test)"]
+        UI_WM["Watermark Studio<br/>(Visible Canvas & Invisible QIM)"]
         UI_Docs["How It Works & Technical Docs"]
-        API_Client["Axios REST Client (`services/api.ts`)"]
+        API_Client["Axios REST Client (services/api.ts)"]
         UI_Dash --> API_Client
         UI_Detect --> API_Client
         UI_WM --> API_Client
         UI_Docs --> API_Client
     end
 
-    subgraph Gateway ["FastAPI HTTP Application (`app/main.py`)"]
+    subgraph Gateway ["FastAPI HTTP Application (app/main.py)"]
         CORS["CORS Middleware"]
-        V_Limits["Payload & Dimension Validator\n(10 MB upload cap, 16 MP resolution limit)"]
+        V_Limits["Payload & Dimension Validator<br/>(10 MB upload cap, 16 MP resolution limit)"]
         Router["APIRouter Dispatcher"]
-        CORS --> V_Limits --> Router
+        CORS --> V_Limits
+        V_Limits --> Router
     end
 
-    subgraph Endpoints ["API Route Handlers (`app/api/`)"]
-        R_Detect["`POST /api/v1/detect/all`\n`POST /api/v1/detect/copy-move`\n`POST /api/v1/detect/splicing`"]
-        R_WM["`POST /api/v1/watermark/embed`\n`POST /api/v1/watermark/verify`"]
-        R_Art["`GET /api/v1/artifacts/{id}`\n`GET /api/v1/health`"]
+    subgraph Endpoints ["API Route Handlers (app/api/)"]
+        R_Detect["POST /api/detect/analyze<br/>POST /api/detect/copy-move"]
+        R_WM["POST /api/watermark<br/>POST /api/watermark/invisible/embed<br/>POST /api/watermark/invisible/verify"]
+        R_Art["GET /api/results/{id}/{artifact}<br/>GET /api/results/{id}/{method}/layer<br/>GET /api/health<br/>GET /api/capabilities"]
     end
 
-    subgraph CoreEngine ["Forensic & Vision Engines (`app/services/`)"]
-        CM_Eng["Copy-Move Service\n- ORB feature extraction\n- BFMatcher with Hamming distance\n- DBSCAN spatial clustering\n- RANSAC geometric consistency"]
-        SP_Eng["Splicing Service\n- Dual-pass JPEG ELA recompression\n- 2D Wavelet (db2) noise extraction\n- Median Absolute Deviation (MAD)\n- Morphological contour filtering"]
-        WM_Vis["Visible Watermark Service\n- PIL RGBA layer compositing\n- Dynamic bounding box & alignment\n- Multi-line text & logo overlay"]
-        WM_Invis["Invisible Watermark Service\n- YCbCr color transform\n- 8x8 block 2D DCT\n- Mid-frequency QIM bit modulation\n- HMAC-SHA256 signature verification\n- PSNR, SSIM, NCC, BER metrics"]
+    subgraph CoreEngine ["Forensic & Vision Engines (app/services/)"]
+        CM_Eng["Copy-Move Service<br/>- ORB feature extraction<br/>- BFMatcher with Hamming distance<br/>- DBSCAN spatial clustering<br/>- RANSAC geometric consistency"]
+        SP_Eng["Splicing Service<br/>- Dual-pass JPEG ELA recompression<br/>- 2D Wavelet noise residual extraction<br/>- Median Absolute Deviation z-scores<br/>- Morphological contour filtering"]
+        WM_Vis["Visible Watermark Service<br/>- PIL RGBA layer compositing<br/>- Dynamic anchor positioning<br/>- Text & logo overlay stamping"]
+        WM_Invis["Invisible Watermark Service<br/>- YCbCr color transform<br/>- 8x8 block 2D DCT<br/>- Mid-frequency QIM bit modulation<br/>- HMAC-SHA256 signature verification"]
     end
 
-    subgraph EphemeralStore ["Artifact Store (`app/services/artifact_store.py`)"]
-        LRU["In-Memory LRU Cache\n- Default TTL: 900s\n- Max Entries: 40\n- Max Cache Memory: 256 MB\n- Automatic eviction & byte caps"]
+    subgraph EphemeralStore ["Artifact Store (app/services/artifact_store.py)"]
+        LRU["In-Memory LRU Cache<br/>- Default TTL: 900s (15 min)<br/>- Max Entries: 40<br/>- Max Cache Memory: 256 MB<br/>- Ephemeral thread-safe store"]
     end
 
-    API_Client <--> Gateway
+    API_Client --> Gateway
+    Gateway --> API_Client
+
     Router --> R_Detect
     Router --> R_WM
     Router --> R_Art
@@ -124,9 +127,9 @@ flowchart TD
 
     CM_Eng --> LRU
     SP_Eng --> LRU
-    WM_Vis --> LRU
     WM_Invis --> LRU
-    R_Art <--> LRU
+    R_Art --> LRU
+    LRU --> R_Art
 ```
 
 ### Architectural Principles
@@ -255,34 +258,34 @@ Watermarked Image ◄── Inverse DCT ◄── Quantize QIM ◄── 8x8 2D 
 sequenceDiagram
     autonumber
     actor User as Forensic Analyst
-    participant Frontend as React UI (/forgery-detection)
-    participant API as FastAPI Router
-    participant CM as Copy-Move Engine (ORB)
-    participant SP as Splicing Engine (ELA/Wavelet)
-    participant Store as Artifact Store (LRU)
+    participant Frontend as "React UI (/forgery-detection)"
+    participant API as "FastAPI Gateway (/api)"
+    participant CM as "Copy-Move Engine (ORB)"
+    participant SP as "Splicing Engine (ELA & Noise)"
+    participant Store as "Artifact Store (LRU)"
 
-    User->>Frontend: Select and upload suspect image
-    Frontend->>API: POST /api/v1/detect/all (Multipart image)
+    User->>Frontend: Select and upload suspect image (or composite)
+    Frontend->>API: POST /api/detect/analyze (Multipart image)
     Note over API: Validate format, 10MB size, 16MP dimensions
 
     par Copy-Move Inspection
-        API->>CM: analyze_copy_move(image_bytes)
+        API->>CM: detect_copy_move(rgb, params)
         CM->>CM: Extract ORB features & match descriptors
         CM->>CM: Filter via RANSAC & cluster spatial points
         CM->>Store: Cache visual match artifact
         CM-->>API: Return keypoint pairs, confidence, status
     and Splicing Inspection
-        API->>SP: analyze_splicing(image_bytes)
-        SP->>SP: Compute JPEG ELA diff (q=95)
+        API->>SP: detect_splicing(rgb, is_jpeg, params)
+        SP->>SP: Compute JPEG ELA diff (quality=90)
         SP->>SP: Decompose 2D wavelets & estimate noise MAD
-        SP->>Store: Cache ELA & Noise heatmap artifacts
+        SP->>Store: Cache ELA and noise diagnostic artifacts
         SP-->>API: Return anomaly maps, z-scores, status
     end
 
-    API->>Store: Cache combined forensic summary
-    API-->>Frontend: Combined JSON (scores, bounding boxes, artifact IDs)
-    Frontend->>Store: GET /api/v1/artifacts/{heatmap_id}
-    Store-->>Frontend: JPEG heatmap image bytes
+    API->>Store: Cache combined forensic summary & score map
+    API-->>Frontend: 200 OK JSON (scores, bounding boxes, artifact URLs)
+    Frontend->>Store: GET /api/results/{id}/splicing.heatmap
+    Store-->>Frontend: Heatmap image stream
     Frontend->>User: Display annotated overlays & risk verdict
 ```
 
@@ -291,22 +294,20 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     actor User as Content Creator
-    participant Frontend as React UI (/watermarking)
-    participant API as FastAPI Router
-    participant Service as Watermark Service
-    participant Store as Artifact Store (LRU)
+    participant Frontend as "React UI (/watermarking)"
+    participant API as "FastAPI Gateway (/api)"
+    participant Service as "Watermark Service"
 
     User->>Frontend: Upload image & configure text/logo, opacity, position
-    Frontend->>API: POST /api/v1/watermark/embed (Visible request)
-    API->>Service: apply_visible_watermark(image_bytes, options)
+    Frontend->>API: POST /api/watermark (Multipart image + options)
+    Note over API: Validate format, 10MB size, 16MP dimensions
+    API->>Service: apply_watermark(image_bytes, options)
     Service->>Service: Parse RGBA layer & calculate anchor coordinates
     Service->>Service: Render TrueType text or composite scaled logo
-    Service->>Store: Save watermarked PNG/JPEG artifact
-    Service-->>API: Watermark result + artifact_id
-    API-->>Frontend: 200 OK (artifact_id, dimensions, metadata)
-    Frontend->>Store: GET /api/v1/artifacts/{artifact_id}
-    Store-->>Frontend: Watermarked image stream
-    Frontend->>User: Display preview and download button
+    Service->>Service: Encode watermarked PNG/JPEG buffer
+    Service-->>API: Return rendered image bytes
+    API-->>Frontend: 200 OK (Stream with Content-Disposition)
+    Frontend->>User: Display live preview & download button
 ```
 
 ### Invisible Watermark Workflow
@@ -314,34 +315,36 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     actor User as Rights Holder
-    participant Frontend as React UI (/watermarking)
-    participant API as FastAPI Router
-    participant Invis as Invisible Watermark Engine
-    participant Store as Artifact Store (LRU)
+    participant Frontend as "React UI (/watermarking)"
+    participant API as "FastAPI Gateway (/api)"
+    participant Invis as "Invisible Watermark Engine"
+    participant Store as "Artifact Store (LRU)"
 
     rect rgb(240, 248, 255)
         note right of User: Phase 1: Embedding Provenance
-        User->>Frontend: Provide asset + Owner ID + Metadata
-        Frontend->>API: POST /api/v1/watermark/embed (Invisible QIM)
+        User->>Frontend: Provide image + Owner ID + Metadata
+        Frontend->>API: POST /api/watermark/invisible/embed (Multipart)
         API->>Invis: embed_invisible_watermark(image, payload, key)
         Invis->>Invis: Calculate 32-bit HMAC-SHA256 signature
         Invis->>Invis: Perform 8x8 block DCT on Y-channel
         Invis->>Invis: Modulate mid-band frequencies via QIM
         Invis->>Invis: Compute PSNR, SSIM, NCC fidelity metrics
-        Invis->>Store: Cache lossless PNG artifact
-        Invis-->>API: Embedding response (PSNR, SSIM, artifact_id)
-        API-->>Frontend: 200 OK + metrics
+        Invis->>Store: Cache lossless PNG artifact in LRU store
+        Invis-->>API: Embedding response (PSNR, SSIM, artifact URL)
+        API-->>Frontend: 200 OK JSON + metrics
+        Frontend->>Store: GET /api/results/{id}/watermarked.png
+        Store-->>Frontend: Lossless PNG image stream
         Frontend->>User: Display fidelity confirmation & lossless download
     end
 
     rect rgb(255, 250, 240)
         note right of User: Phase 2: Verification
         User->>Frontend: Upload candidate image for verification
-        Frontend->>API: POST /api/v1/watermark/verify (Multipart image)
+        Frontend->>API: POST /api/watermark/invisible/verify (Multipart image)
         API->>Invis: verify_invisible_watermark(image, key)
         Invis->>Invis: Extract bitstream from quantized DCT blocks
         Invis->>Invis: Recompute HMAC-SHA256 with server key
-        Invis-->>API: Verification verdict (verified: true/false, payload, BER)
+        Invis-->>API: Verification verdict (verified: true/false, owner, BER)
         API-->>Frontend: 200 OK JSON
         Frontend->>User: Render provenance card & tamper status
     end
@@ -440,17 +443,19 @@ Configure backend options in `backend/.env` (or via process environment variable
 
 ## REST API Reference
 
-All API routes are prefixed with `/api/v1`.
+All API routes are prefixed with `/api`.
 
 | Method | Endpoint | Content-Type | Request Parameters / Body | Description | Response Model / Output |
 |:---|:---|:---|:---|:---|:---|
-| `GET` | `/health` | `application/json` | None | Service liveness probe and component readiness check | `{"status": "healthy", ...}` |
-| `POST` | `/api/v1/detect/all` | `multipart/form-data` | `image: UploadFile` | Executes copy-move and splicing detectors in parallel | `UnifiedDetectionResponse` (composite scores, boxes, artifact IDs) |
-| `POST` | `/api/v1/detect/copy-move` | `multipart/form-data` | `image: UploadFile` | Runs ORB feature matching and RANSAC affine clustering | `CopyMoveResponse` (matched keypoint pairs, candidate clusters) |
-| `POST` | `/api/v1/detect/splicing` | `multipart/form-data` | `image: UploadFile` | Runs JPEG ELA recompression and wavelet noise residual estimation | `SplicingResponse` (anomaly score, ELA & noise heatmap IDs) |
-| `POST` | `/api/v1/watermark/embed` | `multipart/form-data` | `image: UploadFile`, `config: JSON string` | Embeds visible text/logo or invisible QIM watermark payload | `WatermarkEmbedResponse` (artifact ID, PSNR/SSIM metrics if invisible) |
-| `POST` | `/api/v1/watermark/verify` | `multipart/form-data` | `image: UploadFile` | Extracts and cryptographically verifies invisible QIM watermark payload | `WatermarkVerifyResponse` (verified: bool, payload string, BER) |
-| `GET` | `/api/v1/artifacts/{id}` | Varying | Path parameter `id: str` | Retrieves an ephemeral image artifact (heatmap, annotated visualizer) from LRU cache | Binary image stream (`image/png` or `image/jpeg`) |
+| `GET` | `/api/health` | `application/json` | None | Service liveness probe and component readiness check | `HealthResponse` (`status`, `version`, `limits`) |
+| `GET` | `/api/capabilities` | `application/json` | None | Inspect available forensic methods, models, and limits | `Capabilities` (`methods`, `limits`) |
+| `POST` | `/api/detect/analyze` | `multipart/form-data` | `file: UploadFile`, `methods: Form`, `ground_truth_file: UploadFile (optional)` | Multi-method analysis (copy-move, splicing, post-detection evaluation) | `AnalysisResponse` (scores, candidate regions, artifact URLs, evaluation) |
+| `POST` | `/api/detect/copy-move` | `multipart/form-data` | `file: UploadFile`, `params: Form` | Standalone ORB feature matching and RANSAC affine clustering | `DetectionResponse` (keypoint matches, candidate clusters, artifacts) |
+| `GET` | `/api/results/{analysis_id}/{artifact_name}` | Varying | Path params: `analysis_id`, `artifact_name` | Retrieves an ephemeral image artifact (heatmap, annotated visualizer, ELA, noise, mask) | Binary image stream (`image/png` or `image/jpeg`) |
+| `GET` | `/api/results/{analysis_id}/{method}/layer` | `image/png` | Path params: `analysis_id`, `method`, Query: `threshold` | Re-applies threshold to stored score map, returning transparent red overlay layer | Binary PNG image stream (`X-Region-Count` header) |
+| `POST` | `/api/watermark` | `multipart/form-data` | `file: UploadFile`, `logo: UploadFile (optional)`, settings fields | Composites visible TrueType text or logo watermark onto image | Binary image stream (`image/png` or `image/jpeg`) |
+| `POST` | `/api/watermark/invisible/embed` | `multipart/form-data` | `file: UploadFile`, `owner: str`, `strength: str`, `output_format: str` | Embeds authenticated 8x8 DCT-QIM watermark with HMAC-SHA256 signature | `InvisibleEmbedResult` (artifact URL, PSNR, SSIM, bits) |
+| `POST` | `/api/watermark/invisible/verify` | `multipart/form-data` | `file: UploadFile` | Extracts and cryptographically verifies invisible QIM watermark payload | `InvisibleVerifyResult` (verified: bool, owner string, BER) |
 
 ---
 
