@@ -23,7 +23,8 @@ def _key() -> bytes:
     ok, why = watermark_key_status()
     if not ok:
         raise ApiError(503, "watermark_unavailable", f"Invisible watermarking is unavailable: {why}")
-    return settings.watermark_key.get_secret_value().encode()  # type: ignore[union-attr]
+    s = get_settings()
+    return s.watermark_key.get_secret_value().strip().encode()  # type: ignore[union-attr]
 
 
 def _load(file: UploadFile) -> tuple[np.ndarray, imgs.DecodedImage]:

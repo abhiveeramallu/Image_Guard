@@ -23,7 +23,16 @@ export default function InvisibleWatermarkPanel() {
       {loading && <p role="status" className="text-sm text-slate-500">Checking server capabilities…</p>}
       {capsError && <Alert kind="error" title="Cannot reach the server">{capsError}</Alert>}
       {cap && !cap.available && (
-        <Alert kind="warning" title="Invisible watermarking is unavailable"><span className="flex items-center gap-1"><PlugZap size={14} aria-hidden /> {cap.reason}</span></Alert>
+        <Alert kind="warning" title="Invisible watermarking is unavailable">
+          <div className="space-y-2">
+            <span className="flex items-center gap-1 font-medium">
+              <PlugZap size={14} aria-hidden /> {cap.reason}
+            </span>
+            <p className="text-xs text-slate-600">
+              Set <code className="font-mono bg-amber-100 px-1 py-0.5 rounded text-amber-900">IMAGEGUARD_WATERMARK_KEY</code> in your server environment or <code className="font-mono">backend/.env</code> file (minimum 8 characters), then restart the backend server.
+            </p>
+          </div>
+        </Alert>
       )}
       {cap?.available && (
         <div className="grid gap-5 xl:grid-cols-2">

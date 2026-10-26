@@ -7,8 +7,8 @@
 [![Vite](https://img.shields.io/badge/Bundler-Vite_6.0.5-646CFF.svg?logo=vite&logoColor=white)](https://vitejs.dev)
 [![Tailwind CSS](https://img.shields.io/badge/Styles-Tailwind_3.4.17-38B2AC.svg?logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
 [![OpenCV](https://img.shields.io/badge/Vision-OpenCV_4.10.0-5C3EE8.svg?logo=opencv&logoColor=white)](https://opencv.org)
-[![Pytest](https://img.shields.io/badge/Tests-169_Pytest_Passing-brightgreen.svg?logo=pytest&logoColor=white)](https://pytest.org)
-[![Vitest](https://img.shields.io/badge/Tests-47_Vitest_Passing-green.svg?logo=vitest&logoColor=white)](https://vitest.dev)
+[![Pytest](https://img.shields.io/badge/Tests-175_Pytest_Passing-brightgreen.svg?logo=pytest&logoColor=white)](https://pytest.org)
+[![Vitest](https://img.shields.io/badge/Tests-50_Vitest_Passing-green.svg?logo=vitest&logoColor=white)](https://vitest.dev)
 
 ImageGuard is an open-source, full-stack digital image integrity platform combining **classical computer vision heuristics for forgery screening** and **dual-mode digital watermarking for provenance and copyright verification**. Built with a FastAPI backend and a React/TypeScript single-page frontend, ImageGuard enables users to inspect suspect images for copy-move cloning and splicing anomalies, as well as stamp and verify visible and imperceptible digital watermarks.
 
@@ -437,7 +437,37 @@ Configure backend options in `backend/.env` (or via process environment variable
 | `IMAGEGUARD_ARTIFACT_TTL_SECONDS` | Integer | `900` (15 min) | Time-to-live for cached masks and renders in LRU store |
 | `IMAGEGUARD_ARTIFACT_MAX_ENTRIES` | Integer | `40` | Maximum distinct artifacts retained simultaneously in memory |
 | `IMAGEGUARD_ARTIFACT_MAX_TOTAL_MB`| Integer | `256` | Maximum aggregate memory allocated to in-memory artifact caching |
-| `IMAGEGUARD_WATERMARK_KEY` | String | `imageguard-default-secret-key-change-me` | Secret cryptographic key used to generate and verify HMAC-SHA256 signatures for invisible watermarks |
+| `IMAGEGUARD_WATERMARK_KEY` | Secret String | `None` (Unset) | Server-side secret key used to compute and verify HMAC-SHA256 signatures for invisible watermarks |
+
+#### Invisible Watermark Secret Configuration (`IMAGEGUARD_WATERMARK_KEY`)
+
+The invisible watermarking module requires a server-side cryptographic secret key to embed and verify watermarks. If unset or invalid, `/api/capabilities` reports `available: false` and the UI alerts users with setup instructions.
+
+1. **Key Generation**:
+   Generate a high-entropy secret key using Python's standard `secrets` module:
+   ```bash
+   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+
+2. **Configuration**:
+   Add the generated key to `backend/.env` (or root `.env`):
+   ```env
+   IMAGEGUARD_WATERMARK_KEY=your_generated_secret_key_here
+   ```
+   > [!IMPORTANT]
+   > - **Minimum Length**: The key must be at least 8 characters long and non-empty.
+   > - **Environment Resolution**: The backend automatically searches for `.env` at the project root (`./.env`), inside the backend directory (`backend/.env`), or from process environment variables.
+   > - **Git Isolation**: `.env` is ignored by `.gitignore` and must never be committed to source control. Only the non-sensitive placeholder in `backend/.env.example` is committed.
+   > - **Zero Exposure Guarantee**: The secret is wrapped in Pydantic's `SecretStr`. It is strictly maintained on the server and is **never** transmitted to the client, logged, or returned in API responses or error reports.
+
+3. **Restart Backend**:
+   After updating `.env` or setting the environment variable, restart the FastAPI server:
+   ```bash
+   uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload
+   ```
+
+4. **Cryptographic Key Rotation Notice**:
+   The invisible watermarking scheme uses `IMAGEGUARD_WATERMARK_KEY` both to seed block-frequency permutation and to calculate a 32-bit truncated HMAC-SHA256 integrity tag. **Rotating or changing the key renders previously watermarked assets unverifiable with the new key** (they will fail HMAC signature verification and report `status: "not_detected"`). When planning key rotations in production, ensure older keys are archived if backward verification is required.
 
 ---
 
@@ -532,10 +562,10 @@ ImageGuard maintains rigorous test suites covering edge cases (zero dimensions, 
 # Activate virtual environment
 source backend/.venv/bin/activate
 
-# Execute the 169 backend unit and integration tests
+# Execute the 175 backend unit and integration tests
 pytest backend/tests -v
 ```
-**Results**: `169 passed in ~23s` (100% test pass rate).
+**Results**: `175 passed in ~23s` (100% test pass rate).
 
 ### Frontend Verification (Vitest & TypeScript)
 ```bash
@@ -550,7 +580,7 @@ npm test -- --run
 # Run production build verification
 npm run build
 ```
-**Results**: `47 passed across 6 test suites`, `0 TypeScript compiler errors`, clean production bundle created in ~500ms.
+**Results**: `50 passed across 6 test suites`, `0 TypeScript compiler errors`, clean production bundle created in ~500ms.
 
 ### Unified Test Runner
 To execute both test suites in sequence:

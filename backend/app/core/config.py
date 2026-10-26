@@ -1,14 +1,28 @@
 """Application settings, read from environment variables (prefix IMAGEGUARD_)."""
 from functools import lru_cache
+from pathlib import Path
+from typing import Any
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 APP_VERSION = "1.1.0"
 
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent  # backend/
+PROJECT_ROOT = BACKEND_DIR.parent  # repository root
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="IMAGEGUARD_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="IMAGEGUARD_",
+        env_file=(
+            str(PROJECT_ROOT / ".env"),
+            str(BACKEND_DIR / ".env"),
+            ".env",
+        ),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     environment: str = "development"  # "development" | "production"
     # Comma-separated list of allowed browser origins. Never "*" in production.
@@ -30,6 +44,17 @@ class Settings(BaseSettings):
     # Invisible watermark: server-side secret (never sent to clients). Unset => feature unavailable.
     watermark_key: SecretStr | None = None
     watermark_min_pixels: int = 256 * 256
+
+    @field_validator("watermark_key", mode="before")
+    @classmethod
+    def _validate_watermark_key(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return None
+        return v
 
     # Model-based localization (ONNX). Unset path => reported as unavailable, never mocked.
     localization_model_path: str | None = None
@@ -59,3 +84,8 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def clear_settings_cache() -> None:
+    """Clear the cached settings instance, forcing reload on next get_settings()."""
+    get_settings.cache_clear()

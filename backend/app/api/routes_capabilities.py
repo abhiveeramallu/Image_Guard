@@ -9,14 +9,21 @@ settings = get_settings()
 
 
 def watermark_key_status() -> tuple[bool, str | None]:
-    if settings.watermark_key and settings.watermark_key.get_secret_value():
-        return True, None
-    return False, "IMAGEGUARD_WATERMARK_KEY is not set on the server."
+    s = get_settings()
+    if not s.watermark_key or not s.watermark_key.get_secret_value():
+        return False, "IMAGEGUARD_WATERMARK_KEY is not set on the server."
+    val = s.watermark_key.get_secret_value().strip()
+    if not val:
+        return False, "IMAGEGUARD_WATERMARK_KEY is not set on the server."
+    if len(val) < 8:
+        return False, "IMAGEGUARD_WATERMARK_KEY is too short (minimum 8 characters required)."
+    return True, None
 
 
 @router.get("/capabilities", response_model=Capabilities)
 def capabilities() -> Capabilities:
-    model = loc.manager.status(settings)
+    s = get_settings()
+    model = loc.manager.status(s)
     ok, why = watermark_key_status()
     return Capabilities(
         version=APP_VERSION,
@@ -30,6 +37,6 @@ def capabilities() -> Capabilities:
         },
         invisible_watermark=MethodCapability(available=ok, experimental=False, reason=why,
                                              description="DCT-domain invisible watermark with HMAC integrity check."),
-        limits={"max_upload_bytes": settings.max_upload_bytes, "max_image_pixels": settings.max_image_pixels,
-                "artifact_ttl_seconds": settings.artifact_ttl_seconds},
+        limits={"max_upload_bytes": s.max_upload_bytes, "max_image_pixels": s.max_image_pixels,
+                "artifact_ttl_seconds": s.artifact_ttl_seconds},
     )

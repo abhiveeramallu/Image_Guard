@@ -149,6 +149,33 @@ def test_invisible_unavailable_without_key(client):
     assert verify(client, to_bytes(photo_like(seed=1))).status_code == 503
 
 
+def test_invisible_unavailable_with_short_key(client, monkeypatch):
+    from pydantic import SecretStr
+    monkeypatch.setattr(get_settings(), "watermark_key", SecretStr("tiny123"))
+    cap = client.get("/api/capabilities").json()
+    assert cap["invisible_watermark"]["available"] is False
+    assert "too short" in cap["invisible_watermark"]["reason"]
+    assert "tiny123" not in json.dumps(cap)
+
+    r = embed(client, photo_like(seed=1))
+    assert r.status_code == 503 and r.json()["error"]["code"] == "watermark_unavailable"
+    assert "too short" in r.json()["error"]["message"]
+    assert "tiny123" not in json.dumps(r.json())
+
+    v = verify(client, to_bytes(photo_like(seed=1)))
+    assert v.status_code == 503 and v.json()["error"]["code"] == "watermark_unavailable"
+    assert "too short" in v.json()["error"]["message"]
+    assert "tiny123" not in json.dumps(v.json())
+
+
+def test_settings_loads_key_from_backend_env(monkeypatch):
+    from app.core.config import Settings
+    monkeypatch.delenv("IMAGEGUARD_WATERMARK_KEY", raising=False)
+    s = Settings()
+    assert s.watermark_key is not None
+    assert len(s.watermark_key.get_secret_value()) >= 8
+
+
 def test_invisible_embed_download_and_verify_roundtrip(client, wm_key):
     src = photo_like(seed=6)
     r = embed(client, src, owner="Owner-42")
